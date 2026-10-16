@@ -100,7 +100,7 @@
         if (!m && had && !first) {
           stopAll();
           myTeam = null; clearSeat();
-          showSeatForm("The host removed this phone from bidding. Ask again if that was a mistake.");
+          showSeatForm("The host removed this phone from bidding. Ask again if that was a mistake.", null, "bid");
           return;
         }
         first = false;
@@ -362,7 +362,8 @@
     // ============================================================
     // Step 2: pick your team (with its PIN), or just watch
     // ============================================================
-    async function showSeatForm(message = "", preset = null) {
+    // Join form. "watch" (default from the code or QR): just a name. "bid": team + PIN (or a team link) + name.
+    async function showSeatForm(message = "", preset = null, mode = preset ? "bid" : "watch") {
       setWide(false);
       bidBarOff();
       await loadTeamLogos(code, A.teams, logos);
@@ -370,27 +371,49 @@
       let chosen = preset ? preset.team : null;
       let lastName = "";
       try { lastName = localStorage.getItem("bidderName") || ""; } catch (e) {}
+      const bid = mode === "bid";
+      const nameField = `<label class="label" for="nameIn"${bid && !preset ? "" : ` style="margin-top:0"`}>Your name</label>
+          <input id="nameIn" class="input big name-in" maxlength="24" autocomplete="name" placeholder="e.g. Rahim Khan" value="${safe(lastName)}">`;
       view.innerHTML = `
         ${bannerSlot()}
         <div class="join-hero">
           <h1 class="title">${safe(A.title || "Auction")}</h1>
-          <p class="lead">${preset ? "Ask the host to let you bid" : "Are you bidding for a team?"}</p>
+          <p class="lead">${preset ? "Ask the host to let you bid" : bid ? "Bidding for a team" : "Watch the auction live"}</p>
         </div>
         <div class="card">
-          ${preset ? `<div class="team-chosen" style="--c:${safe(A.teams[preset.team].color)}">${crest(preset.team, "lg")}<div><small>Bidding for</small><b>${safe(A.teams[preset.team].name)}</b></div></div>`
-            : `<p class="label" style="margin-top:0">Your team</p>
-               <div class="team-pick">${teams.map(([id, t]) => `
-                 <button class="team-opt" data-team="${id}">${crest(id, "sm")}${safe(t.name)}</button>`).join("")}</div>`}
-          <label class="label" for="nameIn">Your name</label>
-          <input id="nameIn" class="input big" maxlength="24" autocomplete="name" placeholder="e.g. Rahim Khan" value="${safe(lastName)}">
-          ${preset ? "" : `<label class="label" for="pinIn">Team PIN</label>
-            <input id="pinIn" class="input big" maxlength="4" inputmode="numeric" autocomplete="off" placeholder="••••">`}
-          <button id="teamGo" class="btn btn-sun btn-block btn-lg" style="margin-top:12px" ${preset ? "" : "disabled"}>${preset ? "Ask to bid" : "Choose your team"}</button>
-          <p id="seatErr" class="err">${safe(message)}</p>
-          <p class="hint" style="text-align:center">Watching only? Type your name and tap <b>Just watch</b>. The host approves every bidder. Each person needs their own name${preset ? "" : ", and the PIN comes from the host"}.</p>
-          <button id="watchGo" class="btn btn-light btn-block" style="margin-top:14px">Just watch</button>
+          ${!bid ? `
+            ${nameField}
+            <button id="watchGo" class="btn btn-sun btn-block btn-lg" style="margin-top:12px">Watch live ▶</button>
+            <p id="seatErr" class="err">${safe(message)}</p>
+            <p class="hint" style="text-align:center">Your name is only shown to the host.</p>
+            <p class="switch-mode">Bidding for a team? <button class="link-btn" id="toBid">I have a team PIN ›</button></p>`
+          : `
+            ${preset ? `<div class="team-chosen" style="--c:${safe(A.teams[preset.team].color)}">${crest(preset.team, "lg")}<div><small>Bidding for</small><b>${safe(A.teams[preset.team].name)}</b></div></div>`
+              : `<p class="label" style="margin-top:0">Your team</p>
+                 <div class="team-pick">${teams.map(([id, t]) => `
+                   <button class="team-opt" data-team="${id}">${crest(id, "sm")}${safe(t.name)}</button>`).join("")}</div>`}
+            ${nameField}
+            ${preset ? "" : `<label class="label" for="pinIn">Team PIN</label>
+              <input id="pinIn" class="input big" maxlength="4" inputmode="numeric" autocomplete="off" placeholder="••••">`}
+            <button id="teamGo" class="btn btn-sun btn-block btn-lg" style="margin-top:12px" ${preset ? "" : "disabled"}>${preset ? "Ask to bid" : "Choose your team"}</button>
+            <p id="seatErr" class="err">${safe(message)}</p>
+            <p class="hint" style="text-align:center">The host approves every bidder. Each person needs their own name${preset ? "" : ", and the PIN comes from the host"}.</p>
+            <p class="switch-mode">Only watching? <button class="link-btn" id="toWatch">Just watch ›</button></p>`}
         </div>`;
       animate(view);
+      if (!bid) {
+        const watch = () => {
+          const name = cleanName($("nameIn").value);
+          if (name.length < 2) { $("seatErr").textContent = "Type your name to watch (at least 2 letters)."; $("nameIn").focus(); return; }
+          try { localStorage.setItem("bidderName", name); } catch (e) {}
+          myTeam = null; saveSeat(); listen();
+        };
+        $("watchGo").onclick = watch;
+        $("nameIn").addEventListener("keydown", e => { if (e.key === "Enter") watch(); });
+        $("toBid").onclick = () => { try { localStorage.setItem("bidderName", cleanName($("nameIn").value)); } catch (e) {} showSeatForm("", null, "bid"); };
+        if (!lastName) $("nameIn").focus();
+        return;
+      }
       view.querySelectorAll("[data-team]").forEach(b => b.onclick = () => {
         chosen = b.dataset.team;
         view.querySelectorAll("[data-team]").forEach(x => x.classList.toggle("on", x === b));
@@ -408,12 +431,7 @@
       };
       $("teamGo").onclick = go;
       view.querySelectorAll("#nameIn, #pinIn").forEach(i => i.addEventListener("keydown", e => { if (e.key === "Enter") go(); }));
-      $("watchGo").onclick = () => {
-        const name = cleanName($("nameIn").value);
-        if (name.length < 2) { $("seatErr").textContent = "Type your name to watch (at least 2 letters)."; $("nameIn").focus(); return; }
-        try { localStorage.setItem("bidderName", name); } catch (e) {}
-        myTeam = null; saveSeat(); listen();
-      };
+      $("toWatch").onclick = () => { try { localStorage.setItem("bidderName", cleanName($("nameIn").value)); } catch (e) {} showSeatForm("", null, "watch"); };
     }
 
     // Ask to bid: the database checks the PIN and that the name is free; the host then approves
@@ -425,7 +443,7 @@
       try {
         const holder = (await get(ref(db, `auctionNames/${code}/${key}`))).val();
         if (holder && holder !== me.uid) {
-          showSeatForm(`“${name}” is already taken in this auction. Add your surname or a nickname. If it's you on a new phone, ask the host to remove your old phone first.`, preset);
+          showSeatForm(`“${name}” is already taken in this auction. Add your surname or a nickname. If it's you on a new phone, ask the host to remove your old phone first.`, preset, "bid");
           return;
         }
         const prev = (await get(memberRef())).val();
@@ -442,7 +460,7 @@
         keepAwake();
         listen();
       } catch (e) {
-        showSeatForm(preset ? "This team link no longer works. Ask the host for a new one." : "That PIN doesn't match. Check it with the host.", preset);
+        showSeatForm(preset ? "This team link no longer works. Ask the host for a new one." : "That PIN doesn't match. Check it with the host.", preset, "bid");
       }
     }
 

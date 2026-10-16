@@ -660,33 +660,27 @@
       "$aid": {
         ".read": "auth != null",
         ".write": "auth != null && ((!data.exists() && newData.child('owner').val() === auth.uid && auth.provider !== 'anonymous' && $aid.matches(/^[A-Z0-9]{6}$/)) || (data.exists() && data.child('owner').val() === auth.uid))",
-        "members": {
-          "$uid": {
-            ".write": "auth != null && auth.uid === $uid && newData.exists() && root.child('auctionSecrets').child($aid).child('teamPins').child(newData.child('team').val()).val() === newData.child('pin').val()",
-            ".validate": "newData.hasChildren(['team', 'pin', 'name']) && newData.child('name').isString() && newData.child('name').val().length <= 40"
-          }
-        },
         "live": {
-          ".write": "auth != null && root.child('auctions').child($aid).child('members').child(auth.uid).exists() && data.child('state').val() === 'bidding' && now <= data.child('clockFrom').val() + data.child('timerMs').val()",
-          ".validate": "root.child('auctions').child($aid).child('owner').val() === auth.uid || (newData.child('pid').val() === data.child('pid').val() && newData.child('cat').val() === data.child('cat').val() && newData.child('round').val() === data.child('round').val() && newData.child('state').val() === 'bidding' && newData.child('base').val() === data.child('base').val() && newData.child('timerMs').val() === data.child('timerMs').val() && newData.child('seq').val() === data.child('seq').val() + 1 && newData.child('team').val() === root.child('auctions').child($aid).child('members').child(auth.uid).child('team').val() && newData.child('team').val() !== data.child('team').val() && newData.child('amount').isNumber() && ((data.child('team').val() === '' && newData.child('amount').val() >= data.child('amount').val()) || (data.child('team').val() !== '' && newData.child('amount').val() >= data.child('amount').val() + root.child('auctions').child($aid).child('settings').child('cats').child(data.child('cat').val()).child('step').val())) && newData.child('amount').val() <= root.child('auctions').child($aid).child('teams').child(newData.child('team').val()).child('maxBid').child(newData.child('cat').val()).val() && newData.child('clockFrom').val() === now && !newData.hasChild('pausedLeft'))"
+          ".write": "auth != null && root.child('auctionMembers').child($aid).child(auth.uid).exists() && data.child('state').val() === 'bidding' && now <= data.child('clockFrom').val() + data.child('timerMs').val()",
+          ".validate": "root.child('auctions').child($aid).child('owner').val() === auth.uid || (newData.child('pid').val() === data.child('pid').val() && newData.child('cat').val() === data.child('cat').val() && newData.child('round').val() === data.child('round').val() && newData.child('state').val() === 'bidding' && newData.child('base').val() === data.child('base').val() && newData.child('timerMs').val() === data.child('timerMs').val() && newData.child('seq').val() === data.child('seq').val() + 1 && newData.child('team').val() === root.child('auctionMembers').child($aid).child(auth.uid).child('team').val() && newData.child('team').val() !== data.child('team').val() && newData.child('amount').isNumber() && ((data.child('team').val() === '' && newData.child('amount').val() >= data.child('amount').val()) || (data.child('team').val() !== '' && newData.child('amount').val() >= data.child('amount').val() + root.child('auctions').child($aid).child('settings').child('cats').child(data.child('cat').val()).child('step').val())) && newData.child('amount').val() <= root.child('auctions').child($aid).child('teams').child(newData.child('team').val()).child('maxBid').child(newData.child('cat').val()).val() && newData.child('clockFrom').val() === now && !newData.hasChild('pausedLeft'))"
         },
         "bids": {
           "$pid": {
             "$bid": {
-              ".write": "auth != null && !data.exists() && root.child('auctions').child($aid).child('members').child(auth.uid).exists() && root.child('auctions').child($aid).child('live').child('state').val() === 'bidding'",
-              ".validate": "root.child('auctions').child($aid).child('owner').val() === auth.uid || (newData.child('team').val() === root.child('auctions').child($aid).child('members').child(auth.uid).child('team').val() && newData.child('at').val() === now && newData.child('amount').isNumber())"
+              ".write": "auth != null && !data.exists() && root.child('auctionMembers').child($aid).child(auth.uid).exists() && root.child('auctions').child($aid).child('live').child('state').val() === 'bidding'",
+              ".validate": "root.child('auctions').child($aid).child('owner').val() === auth.uid || (newData.child('team').val() === root.child('auctionMembers').child($aid).child(auth.uid).child('team').val() && newData.child('at').val() === now && newData.child('amount').isNumber())"
             }
           }
         },
         "wishCount": {
           "$pid": {
-            ".write": "auth != null && root.child('auctions').child($aid).child('members').child(auth.uid).exists() && root.child('auctions').child($aid).child('status').val() === 'live'",
-            ".validate": "root.child('auctions').child($aid).child('owner').val() === auth.uid || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 10 && ((((!data.exists() && newData.val() === 1) || (data.exists() && newData.val() === data.val() + 1)) && !root.child('auctionWish').child($aid).child(root.child('auctions').child($aid).child('members').child(auth.uid).child('team').val()).child($pid).exists()) || (data.exists() && newData.val() === data.val() - 1 && root.child('auctionWish').child($aid).child(root.child('auctions').child($aid).child('members').child(auth.uid).child('team').val()).child($pid).exists())))"
+            ".write": "auth != null && root.child('auctionMembers').child($aid).child(auth.uid).exists() && root.child('auctions').child($aid).child('status').val() === 'live'",
+            ".validate": "root.child('auctions').child($aid).child('owner').val() === auth.uid || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 10 && ((((!data.exists() && newData.val() === 1) || (data.exists() && newData.val() === data.val() + 1)) && !root.child('auctionWish').child($aid).child(root.child('auctionMembers').child($aid).child(auth.uid).child('team').val()).child($pid).exists()) || (data.exists() && newData.val() === data.val() - 1 && root.child('auctionWish').child($aid).child(root.child('auctionMembers').child($aid).child(auth.uid).child('team').val()).child($pid).exists())))"
           }
         },
         "teamRequests": {
           "$tid": {
-            ".write": "auth != null && root.child('auctions').child($aid).child('members').child(auth.uid).child('team').val() === $tid",
+            ".write": "auth != null && root.child('auctionMembers').child($aid).child(auth.uid).child('team').val() === $tid",
             ".validate": "root.child('auctions').child($aid).child('owner').val() === auth.uid || (newData.hasChildren(['by', 'at']) && newData.child('by').val() === auth.uid && newData.child('at').val() === now && (!newData.hasChild('name') || (newData.child('name').isString() && newData.child('name').val().length >= 1 && newData.child('name').val().length <= 24)) && (!newData.hasChild('logo') || (newData.child('logo').isString() && newData.child('logo').val().length <= 150000)))"
           }
         }
@@ -695,11 +689,22 @@
     "auctionWish": {
       "$aid": {
         "$team": {
-          ".read": "auth != null && root.child('auctions').child($aid).child('members').child(auth.uid).child('team').val() === $team",
+          ".read": "auth != null && root.child('auctionMembers').child($aid).child(auth.uid).child('team').val() === $team",
           "$pid": {
-            ".write": "auth != null && root.child('auctions').child($aid).child('members').child(auth.uid).child('team').val() === $team && root.child('auctions').child($aid).child('status').val() === 'live'",
+            ".write": "auth != null && root.child('auctionMembers').child($aid).child(auth.uid).child('team').val() === $team && root.child('auctions').child($aid).child('status').val() === 'live'",
             ".validate": "newData.isBoolean()"
           }
+        }
+      }
+    },
+    "auctionMembers": {
+      "$aid": {
+        ".read": "auth != null && root.child('auctions').child($aid).child('owner').val() === auth.uid",
+        ".write": "auth != null && root.child('auctions').child($aid).child('owner').val() === auth.uid && !newData.exists()",
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid && newData.exists() && root.child('auctionSecrets').child($aid).child('teamPins').child(newData.child('team').val()).val() === newData.child('pin').val()",
+          ".validate": "newData.hasChildren(['team', 'pin', 'name']) && newData.child('name').isString() && newData.child('name').val().length <= 40"
         }
       }
     },

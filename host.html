@@ -76,7 +76,7 @@
       catColour, crestHTML, loadTeamLogos, logoOf,
       CURRENCIES, SPORTS, sportOf, sportName, sportIcon, schemaFor, sportDefaults, applySportTheme, mountSportPicker,
       readSheetFile, norm, matchRole, matchSub, matchHand, cleanAge,
-      dialog, alertBox, confirmBox, copyText, teamBudget, allMaxBids
+      dialog, alertBox, confirmBox, copyText, teamBudget, allMaxBids, compressBanner, loadBanners
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction setup");
@@ -159,7 +159,7 @@
         const c = del.dataset.del;
         await update(ref(db), {
           [`auctions/${c}`]: null, [`auctionSecrets/${c}`]: null,
-          [`auctionPhotos/${c}`]: null, [`auctionsByOwner/${user.uid}/${c}`]: null
+          [`auctionPhotos/${c}`]: null, [`auctionMembers/${c}`]: null, [`auctionsByOwner/${user.uid}/${c}`]: null
         });
         showList();
       }
@@ -358,8 +358,54 @@
              </div>
              <p class="hint">The timer restarts after every bid. When it runs out, the player is sold.</p>`)}
         </div>
+        <div style="margin-top:14px">${bannerSecHTML()}</div>
         <div style="margin-top:14px">${readinessHTML()}</div>`;
       mountSportPicker($("sportPick"), s.sport, changeSport, { disabled: locked() });
+      fillBannerThumbs();
+    }
+
+    // ---------- this auction's landing photos ----------
+    const MAX_BANNERS = 5;
+    const bannerCache = {};
+    const bannerIds = () => Object.entries(A.banners || {}).sort((a, b) => (a[1].order || 0) - (b[1].order || 0)).map(([id]) => id);
+    function bannerSecHTML() {
+      const ids = bannerIds();
+      return sec("rose", "🖼️", "Auction landing photos",
+        "Shown to everyone who opens this auction (team phones and viewers) and behind the auction room. Use your venue, trophy or sponsor pictures.",
+        `<div class="banner-grid">
+           ${ids.map((id, k) => `<div class="banner-thumb"><img data-bthumb="${id}" alt="">
+              <span class="bt-n">${k + 1}</span><button class="icon-btn" data-bdel="${id}" aria-label="Remove photo">✕</button></div>`).join("")}
+           ${ids.length < MAX_BANNERS ? `<label class="banner-add">+ Add photos<small>${ids.length} of ${MAX_BANNERS}</small><input type="file" id="bannerIn" accept="image/*" multiple hidden></label>` : ""}
+         </div>
+         <p class="hint">${ids.length ? "The first photo is also the page background. Photos change every 5 seconds." : "No photos yet: the sport's standard background is used."}</p>`);
+    }
+    async function fillBannerThumbs() {
+      await loadBanners(code, A.banners, bannerCache);
+      document.querySelectorAll("[data-bthumb]").forEach(img => { const c = bannerCache[img.dataset.bthumb]; if (c && c.src) img.src = c.src; });
+    }
+    async function addBanners(files) {
+      let room = MAX_BANNERS - bannerIds().length, added = 0;
+      $("saveNote").textContent = "Uploading…";
+      for (const f of files) {
+        if (room <= 0) break;
+        try {
+          const src = await compressBanner(f), id = newId(), v = Date.now();
+          await set(ref(db, `auctionPhotos/${code}/b_${id}`), src);
+          const meta = { order: v, v };
+          await set(ref(db, `auctions/${code}/banners/${id}`), meta);
+          A.banners = { ...(A.banners || {}), [id]: meta };
+          bannerCache[id] = { v, src };
+          room--; added++;
+        } catch (e) { alertBox("Photo not used", `${f.name}: ${e.message || "couldn't be read. Try a JPG or PNG."}`, "🖼️"); }
+      }
+      $("saveNote").textContent = added ? "Saved" : "";
+      if (tab === "basics") renderBasics();
+    }
+    async function removeBanner(id) {
+      if (!await confirmBox("Remove this photo?", "It disappears from the auction's pages.", { ok: "Remove", danger: true })) return;
+      await update(ref(db), { [`auctions/${code}/banners/${id}`]: null, [`auctionPhotos/${code}/b_${id}`]: null });
+      delete A.banners[id];
+      renderBasics();
     }
 
     async function changeSport(id) {
@@ -388,7 +434,10 @@
       updateTop();
     }
 
-    $("pane-basics").addEventListener("click", e => { const g = e.target.closest("[data-goto]"); if (g) showTab(g.dataset.goto); });
+    $("pane-basics").addEventListener("click", e => {
+      const g = e.target.closest("[data-goto]"); if (g) showTab(g.dataset.goto);
+      const bd = e.target.closest("[data-bdel]"); if (bd) removeBanner(bd.dataset.bdel);
+    });
     $("pane-basics").addEventListener("input", e => {
       const t = e.target, s = A.settings;
       const num = (v, min) => Math.max(min, Math.round(Number(v) || 0));
@@ -400,6 +449,7 @@
     });
     $("pane-basics").addEventListener("change", e => {
       const t = e.target, s = A.settings;
+      if (t.id === "bannerIn") { const f = [...t.files]; t.value = ""; if (f.length) addBanners(f); return; }
       if (t.id === "sCurrency") {
         const c = CURRENCIES[t.value];
         Object.assign(s, { currency: t.value, unit: c.unit, unitAfter: c.after });
@@ -655,6 +705,7 @@
         cols.push({ key: "role", label: S.roleLabel, req: true }, { key: "sub", label: S.subLabel });
         S.extra.forEach(x => cols.push({ key: x.key, label: x.label }));
       } else cols.push({ key: "info", label: "Info" });
+      cols.push({ key: "attrs", label: "Special attributes" }, { key: "fav", label: "Favourite player" });
       cols.push({ key: "cat", label: "Category" });
       return cols;
     }
@@ -667,7 +718,9 @@
       bowlHand: ["bowlinghand", "bowlhand", "bowls", "bowlingarm", "bowling"],
       foot: ["foot", "preferredfoot", "strongfoot", "footed"],
       cat: ["category", "cat", "group", "pool", "set", "auctioncategory"],
-      info: ["info", "details", "notes", "note", "description", "about"]
+      info: ["info", "details", "notes", "note", "description", "about"],
+      attrs: ["specialattributes", "specialattribute", "attributes", "attribute", "special", "skills", "strengths", "traits", "tags"],
+      fav: ["favouriteplayer", "favoriteplayer", "favourite", "favorite", "fav", "favplayer", "idol", "rolemodel"]
     };
     const optionHTML = (opts, sel, blank = "–") => `<option value="">${blank}</option>` + opts.map(([v, l]) => `<option value="${safe(v)}" ${sel === v ? "selected" : ""}>${safe(l)}</option>`).join("");
     const roleOptions = sel => optionHTML(Object.entries(sch().roles).map(([k, r]) => [k, r.name]), sel, "Choose…");
@@ -691,6 +744,11 @@
            <small>Click to choose a file, or drop it here · .xlsx, .xls, .csv</small>
            <input type="file" id="sheetFile" accept=".xlsx,.xls,.xlsm,.ods,.csv,.txt" hidden>
          </label>
+         <label class="drop" id="photoZone" style="margin-top:10px">
+           <b>📷 Upload player photos</b>
+           <small>Choose many at once. Name each file after the player, e.g. <i>Arif Hossain.jpg</i>, and it's matched automatically.</small>
+           <input type="file" id="photoFiles" accept="image/*" multiple hidden>
+         </label>
          <p class="hint">Columns, in this order (the header row is optional):</p>
          <div class="cols-note">${columns().map(c => `<span class="${c.req ? "req" : ""}">${safe(c.label)}${c.req ? " *" : ""}</span>`).join("")}</div>
          <div class="row" style="margin-top:12px">
@@ -711,7 +769,10 @@
              <label>${safe(S.subLabel)}<select id="aSub" class="select">${subOptions(lastRole, "")}</select></label>
              ${S.extra.map(x => `<label>${safe(x.label)}<select id="a_${x.key}" class="select">${optionHTML(x.options, "")}</select></label>`).join("")}`
            : `<label class="wide">Info<input id="aInfo" class="input" maxlength="60" placeholder="e.g. Captain, left-handed"></label>`}
+           <label class="wide">Special attributes<input id="aAttrs" class="input" maxlength="120" placeholder="e.g. Captain, Free kicks, Pace"></label>
+           <label>Favourite player<input id="aFav" class="input" maxlength="40" placeholder="e.g. Messi"></label>
            <label>Category<select id="aCat" class="select">${catOptions(lastCat)}</select></label>
+           <label class="photo-pick" id="aPhotoBox">Photo<span class="photo-pick-btn" id="aPhotoLbl">📷 Choose photo</span><input type="file" id="aPhoto" accept="image/*" hidden></label>
            <button id="pAdd" class="btn btn-sun">Add player</button>
          </div>`);
 
@@ -721,7 +782,7 @@
           return `<span class="cat-chip ${need && have < need ? "short" : ""}" style="--cc:${catColour(s, c.id)}"><b>${safe(c.name)}</b> ${have}${need ? ` of ${need} needed` : ""} · base ${money(c.base, s)}</span>`;
         }).join("")}</div>`);
 
-      const head = `<th>#</th><th>Photo</th><th>Name</th><th>Age</th>${S ? `<th>${safe(S.roleLabel)}</th><th>${safe(S.subLabel)}</th>${S.extra.map(x => `<th>${safe(x.label)}</th>`).join("")}` : `<th>Info</th>`}<th>Category</th><th>Status</th><th></th>`;
+      const head = `<th>#</th><th>Photo</th><th>Name</th><th>Age</th>${S ? `<th>${safe(S.roleLabel)}</th><th>${safe(S.subLabel)}</th>${S.extra.map(x => `<th>${safe(x.label)}</th>`).join("")}` : `<th>Info</th>`}<th>Special attributes</th><th>Favourite player</th><th>Category</th><th>Status</th><th></th>`;
       const rows = list.map(([id, p], k) => {
         const c = cats.find(x => x.id === p.cat);
         return `<tr class="${c ? "" : "no-cat"}">
@@ -736,12 +797,15 @@
             <td><select class="select" data-pf="sub" data-pid="${id}">${subOptions(p.role, p.sub || "")}</select></td>
             ${S.extra.map(x => `<td><select class="select" data-pf="${x.key}" data-pid="${id}">${optionHTML(x.options, p[x.key] || "")}</select></td>`).join("")}`
           : `<td><input class="input" data-pf="info" data-pid="${id}" value="${safe(p.info || "")}" maxlength="60" placeholder="Optional"></td>`}
+          <td><input class="input" data-pf="attrs" data-pid="${id}" value="${safe(p.attrs || "")}" maxlength="120" placeholder="Captain, Pace…" style="min-width:170px"></td>
+          <td><input class="input" data-pf="fav" data-pid="${id}" value="${safe(p.fav || "")}" maxlength="40" placeholder="Optional" style="min-width:120px"></td>
           <td><select class="select" data-pf="cat" data-pid="${id}" ${p.status === "sold" ? "disabled" : ""}>${c ? "" : `<option value="">Choose…</option>`}${catOptions(p.cat)}</select></td>
           <td><span class="status-tag ${p.status || ""}">${p.status === "sold" ? "Sold" : p.status === "unsold" ? "Unsold" : "Waiting"}</span></td>
           <td>${p.status === "sold" ? "" : `<button class="icon-btn" data-pdel="${id}" aria-label="Delete player">✕</button>`}</td>
         </tr>`;
       }).join("");
-      const listSec = sec("slate", "📋", `Player list <span class="muted" style="font-size:18px">${list.length}</span>`, "Edits save as you type. Click + to add a photo.",
+      const noPhoto = list.filter(([, p]) => !p.hasPhoto).length;
+      const listSec = sec("slate", "📋", `Player list <span class="muted" style="font-size:18px">${list.length}</span>`, `Edits save as you type. Click + to add a photo.${list.length ? ` <b>${noPhoto ? `${noPhoto} still without a photo.` : "Every player has a photo ✓"}</b>` : ""}`,
         list.length ? `<div class="row" style="justify-content:flex-end"><button id="shuffleBtn" class="btn btn-light btn-sm">Shuffle the order</button></div>
           <div class="table-scroll"><table class="players-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`
           : `<div class="empty">No players yet. Import a file or add them one by one.</div>`);
@@ -756,6 +820,12 @@
       dz.addEventListener("dragleave", () => dz.classList.remove("over"));
       dz.addEventListener("drop", e => { e.preventDefault(); dz.classList.remove("over"); const f = e.dataTransfer.files[0]; if (f) importFile(f); });
       $("tmplBtn").onclick = downloadTemplate;
+      $("photoFiles").onchange = e => { const f = [...e.target.files]; e.target.value = ""; if (f.length) importPhotos(f); };
+      const pz = $("photoZone");
+      pz.addEventListener("dragover", e => { e.preventDefault(); pz.classList.add("over"); });
+      pz.addEventListener("dragleave", () => pz.classList.remove("over"));
+      pz.addEventListener("drop", e => { e.preventDefault(); pz.classList.remove("over"); const f = [...e.dataTransfer.files].filter(x => x.type.startsWith("image/")); if (f.length) importPhotos(f); });
+      $("aPhoto").onchange = e => { const f = e.target.files[0]; $("aPhotoLbl").textContent = f ? `✓ ${f.name.slice(0, 18)}` : "📷 Choose photo"; };
       $("bulkAdd").onclick = () => importRows(parseTable($("bulkText").value || ""));
       // add one
       $("pAdd").onclick = addOne;
@@ -788,12 +858,45 @@
         p.role = $("aRole").value; p.sub = $("aSub").value;
         S.extra.forEach(x => { p[x.key] = $(`a_${x.key}`).value; });
       } else p.info = $("aInfo").value.trim();
+      p.attrs = $("aAttrs").value.trim();
+      p.fav = $("aFav").value.trim();
       lastCat = p.cat;
       const id = newId(), clean = tidy(p);
+      const photo = $("aPhoto").files[0];
       A.players[id] = clean;
       await set(ref(db, `auctions/${code}/players/${id}`), clean);
+      if (photo) {
+        try { await savePlayerPhoto(id, photo); }
+        catch (e) { alertBox("Photo not used", "The player was added, but that photo couldn't be read. Add it from the list.", "🖼️"); }
+      }
       renderPlayers(); updateTop();
       $("aName").focus();
+    }
+
+    async function savePlayerPhoto(pid, file) {
+      const src = await compressPhoto(file, 480, 0.8);
+      await set(ref(db, `auctionPhotos/${code}/${pid}`), src);
+      A.players[pid].hasPhoto = true;
+      await set(ref(db, `auctions/${code}/players/${pid}/hasPhoto`), true);
+    }
+
+    // Many photos at once: "Arif Hossain.jpg" → the player called Arif Hossain
+    async function importPhotos(files) {
+      const byName = new Map(Object.entries(A.players).map(([id, p]) => [norm(p.name), id]));
+      let done = 0;
+      const missed = [];
+      toast(`Uploading ${files.length} photo${files.length === 1 ? "" : "s"}…`);
+      for (const f of files) {
+        const key = norm(f.name.replace(/\.[^.]+$/, ""));
+        const id = byName.get(key) || [...byName].find(([n]) => n && (n.startsWith(key) || key.startsWith(n)))?.[1];
+        if (!id) { missed.push(f.name); continue; }
+        try { await savePlayerPhoto(id, f); done++; } catch (e) { missed.push(f.name); }
+      }
+      renderPlayers();
+      toast(`${done} photo${done === 1 ? "" : "s"} added`);
+      if (missed.length) dialog({ title: "Some photos weren't matched", icon: "📷", dismiss: true,
+        html: `<p>No player has these names (or the file couldn't be read). Rename the file to the player's name, or add it from the list with +.</p><ul class="dlg-list">${missed.map(x => `<li>${safe(x)}</li>`).join("")}</ul>`,
+        buttons: [{ label: "OK", value: true, kind: "sun" }] });
     }
 
     async function importFile(file) {
@@ -836,6 +939,8 @@
           if (sport === "football") p.foot = matchHand(cell(r, "foot"), true);
         } else info = [cell(r, "role"), cell(r, "sub"), info].filter(Boolean).join(" · ");
         if (info) p.info = info.slice(0, 60);
+        if (cell(r, "attrs")) p.attrs = cell(r, "attrs").slice(0, 120);
+        if (cell(r, "fav")) p.fav = cell(r, "fav").slice(0, 40);
         // category: the column if given, else the player's type (Bowler → Bowlers), else the first one
         const catText = cell(r, "cat");
         let cat = findCat(catText);
@@ -870,16 +975,16 @@
       const sport = A.settings.sport;
       const head = columns().map(c => c.label);
       const eg = sport === "cricket" ? [
-          ["Arif Hossain", 27, "Batsman", "Opener", "Left", "", "Batters"],
-          ["Sabbir Khan", 24, "Bowler", "Leg Spin", "Right", "Right", "Bowlers"],
-          ["Tanvir Ahmed", 30, "All Rounder", "Bowling All Rounder", "Left", "Left", "All-rounders"],
-          ["Nayeem Islam", 26, "Wicket Keeper", "Middle Order", "Right", "", "Wicketkeepers"]]
+          ["Arif Hossain", 27, "Batsman", "Opener", "Left", "", "Captain, Big hitter", "Tamim Iqbal", "Batters"],
+          ["Sabbir Khan", 24, "Bowler", "Leg Spin", "Right", "Right", "Death overs", "Rashid Khan", "Bowlers"],
+          ["Tanvir Ahmed", 30, "All Rounder", "Bowling All Rounder", "Left", "Left", "", "Shakib Al Hasan", "All-rounders"],
+          ["Nayeem Islam", 26, "Wicket Keeper", "Middle Order", "Right", "", "Quick hands", "", "Wicketkeepers"]]
         : sport === "football" ? [
-          ["Rafiq Hasan", 25, "Goalkeeper", "", "Right", "Goalkeepers"],
-          ["Mahbub Alam", 28, "Defender", "Centre Back", "Left", "Defenders"],
-          ["Jewel Rana", 23, "Midfielder", "Attacking Mid", "Both", "Midfielders"],
-          ["Sohel Rahman", 21, "Forward", "Striker", "Right", "Forwards"]]
-        : [["Player One", 24, "Captain", catList(A.settings)[0]?.name || ""], ["Player Two", 19, "", catList(A.settings)[1]?.name || ""]];
+          ["Rafiq Hasan", 25, "Goalkeeper", "", "Right", "Penalty saver, Captain", "Manuel Neuer", "Goalkeepers"],
+          ["Mahbub Alam", 28, "Defender", "Centre Back", "Left", "Strong in the air", "Sergio Ramos", "Defenders"],
+          ["Jewel Rana", 23, "Midfielder", "Attacking Mid", "Both", "Free kicks, Vision", "Lionel Messi", "Midfielders"],
+          ["Sohel Rahman", 21, "Forward", "Striker", "Right", "Pace, Finishing", "Cristiano Ronaldo", "Forwards"]]
+        : [["Player One", 24, "", "Captain", "", catList(A.settings)[0]?.name || ""], ["Player Two", 19, "", "", "", catList(A.settings)[1]?.name || ""]];
       downloadCSV(toCSV([head, ...eg]), `${sportName(sport)} players template`);
     }
 
@@ -896,7 +1001,7 @@
     // typing: name, age, info
     $("pane-players").addEventListener("input", e => {
       const t = e.target, f = t.dataset.pf, id = t.dataset.pid;
-      if (!id || !["name", "info", "age"].includes(f)) return;
+      if (!id || !["name", "info", "age", "attrs", "fav"].includes(f)) return;
       const val = f === "name" ? (t.value.trim() || "Player") : f === "age" ? (cleanAge(t.value) || null) : (t.value.trim() || null);
       if (val === null) delete A.players[id][f]; else A.players[id][f] = val;
       saveLater(`p${id}${f}`, () => set(ref(db, `auctions/${code}/players/${id}/${f}`), val));
@@ -921,10 +1026,7 @@
       if (!t.dataset.photo || !t.files[0]) return;
       const pid = t.dataset.photo;
       try {
-        const src = await compressPhoto(t.files[0]);
-        await set(ref(db, `auctionPhotos/${code}/${pid}`), src);
-        A.players[pid].hasPhoto = true;
-        await set(ref(db, `auctions/${code}/players/${pid}/hasPhoto`), true);
+        await savePlayerPhoto(pid, t.files[0]);
         renderPlayers();
       } catch (err) { alertBox("Photo not used", "That photo couldn't be read. Try a JPG or PNG.", "🖼️"); }
     });

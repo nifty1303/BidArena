@@ -34,7 +34,8 @@
           <button id="nextBtn" class="btn btn-sun btn-lg">Next player ▶</button>
           <button id="pickBtn" class="btn btn-dark">Choose player</button>
           <span class="sep"></span>
-          <button id="pauseBtn" class="btn btn-dark">⏸ Pause</button>
+          <button id="pauseBtn" class="btn btn-dark btn-lg">⏸ Pause timer</button>
+          <button id="addTimeBtn" class="btn btn-dark" title="Give 10 more seconds">+10s</button>
           <button id="soldBtn" class="btn btn-dark">🔨 Sold now</button>
           <button id="unsoldBtn" class="btn btn-dark">Unsold</button>
           <button id="restartBtn" class="btn btn-dark">↺ Restart bidding</button>
@@ -47,7 +48,7 @@
           <div id="qbRow" class="qb-row"></div>
         </div>
         <div class="ticker" id="ticker" hidden><span class="ticker-label">🔨 Sold</span><div class="ticker-track" id="tickerTrack"></div></div>
-        <p class="kbd">Shortcuts: <b>N</b> next · <b>P</b> pause · <b>S</b> sold · <b>U</b> unsold · <b>F</b> full screen</p>
+        <p class="kbd">Shortcuts: <b>N</b> next · <b>P</b> or <b>Space</b> pause / resume · <b>T</b> +10s · <b>S</b> sold · <b>U</b> unsold · <b>F</b> full screen</p>
         <p id="queueNote" class="kbd" style="margin-top:6px"></p>
       </div>
 
@@ -68,7 +69,8 @@
       safe, animate, initials, money, nextBid, stepFor, allMaxBids, sounds, unlockAudio, confetti, toCSV, downloadCSV, brandHTML, endsAt,
       catList, catMax, squadLimits, squadText, setupProblems, UNSOLD_RULES,
       catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine,
-      dialog, alertBox, confirmBox, copyText, teamBudget, purseLeftOf
+      dialog, alertBox, confirmBox, copyText, teamBudget, purseLeftOf,
+      playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction room");
@@ -107,9 +109,25 @@
         A = snap.val();
         if (!A) { message(`<h2 class="title">Auction not found</h2><p class="lead">It may have been deleted.</p>`); return; }
         if (A.owner !== user.uid) { message(`<h2 class="title">Not your auction</h2><p class="lead">Only its host can run this room. To watch, open the viewer page with the code <b>${code}</b>.</p>`); return; }
+        if (A.members) set(aRef("members"), null);     // old public member list held team PINs; members now live in auctionMembers
         render();
+        refreshBanners();
         if (await loadTeamLogos(code, A.teams, logos)) { lastKey = ""; render(); }   // a team picture changed
       });
+    }
+
+    // The auction's own photos: page background, and a slideshow while waiting for the next player
+    const bannerCache = {};
+    let bannerSrcs = [], bannerKey = null;
+    async function refreshBanners() {
+      const key = JSON.stringify(A.banners || {});
+      if (key === bannerKey) return;
+      bannerKey = key;
+      bannerSrcs = await loadBanners(code, A.banners, bannerCache);
+      setPageBackground(bannerSrcs[0]);
+      startBannerShow();
+      $("stage").dataset.idle = "";
+      if (A.status === "live") renderStage();
     }
 
     const S = () => A.settings || {};
@@ -122,7 +140,6 @@
     // Drawing
     // ============================================================
     // A player's details as small tags (type, subtype, hands, age…)
-    const tagsHTML = p => { const t = playerTags(p, S()); return t.length ? `<p class="lot-info">${t.map(x => `<span class="tag">${safe(x)}</span>`).join("")}</p>` : ""; };
 
     function render() {
       applySportTheme(S().sport);
@@ -134,7 +151,7 @@
 
       renderRequests();
       $("livePill").hidden = A.status !== "live";
-      if (A.status === "ended") return renderResults();
+      if (A.status === "ended") { $("stage").dataset.idle = ""; return renderResults(); }
       $("results").hidden = true;
       if (A.status !== "live") return renderStartScreen();
 
@@ -201,9 +218,9 @@
 
     // Before starting: make sure every team has been sent its link
     async function shareCheck() {
-      const sec = (await get(ref(db, `auctionSecrets/${code}`))).val() || {};
+      const [sec, members] = (await Promise.all([get(ref(db, `auctionSecrets/${code}`)), get(ref(db, `auctionMembers/${code}`))])).map(x => x.val() || {});
       const pins = sec.teamPins || {}, shared = { ...(sec.shared || {}) };
-      const joined = new Set(Object.values(A.members || {}).map(m => m.team));
+      const joined = new Set(Object.values(members).map(m => m.team));
       const waiting = teams().filter(([id]) => !shared[id] && !joined.has(id));
       if (!waiting.length) return true;
       const base = new URL("./", location.href).href;
@@ -316,7 +333,7 @@
           const unsold = players().filter(([, p]) => p.status === "unsold").length;
           const q = queue();
           const first = !Object.keys(A.sales || {}).length && !players().some(([, p]) => p.status === "unsold");
-          const html = first && q ? `
+          const html = bannerHTML(bannerSrcs, "stage-banner") + (first && q ? `
             <div class="idle">
               <p class="bid-label">Tonight's contenders</p>
               <h2 class="title">Welcome to <span>${safe(A.title || "the auction")}</span></h2>
@@ -328,7 +345,7 @@
               <h2 class="title">${q ? safe(A.players[q.pid].name) : unsold ? `${unsold} player${unsold === 1 ? "" : "s"} in the unsold pool` : "That's everyone!"}</h2>
               <p class="lead">${pending().length} waiting · ${sold} sold · ${unsold} unsold</p>
               <p class="lead">${q ? "Press <b>Next player</b> (or N) to open bidding." : unsold ? "Call players from the <b>unsold pool</b>, or <b>End auction</b> to see the final squads." : "Press <b>End auction</b> to see the final squads."}</p>
-            </div>`;
+            </div>`);
           if (stage.dataset.idle !== html) { stage.innerHTML = html; stage.dataset.idle = html; if (changed) animate(stage); }
         }
         lastKey = key; lastSeq = -1;
@@ -347,12 +364,12 @@
             <div class="pcard" style="--cc:${cc}">
               <span class="pcard-cat">${safe(cat.name)}</span>
               <div id="lotPhoto" class="pcard-init">${safe(initials(p.name))}</div>
-              <div class="pcard-foot"><b>${safe(p.name)}</b><span>Base ${money(live.base, s)}</span></div>
+              <div class="pcard-foot"><b>${safe(p.name)}</b><span>${safe(positionOf(p, s) || `Base ${money(live.base, s)}`)}</span></div>
             </div>
             <div>
               <span class="lot-cat" style="background:${cc};color:#000">${safe(cat.name)}</span>
               <h2 class="lot-name">${safe(p.name)}</h2>
-              ${tagsHTML(p)}
+              ${playerDetailsHTML(p, s)}
               <p class="lot-base">Base price <strong>${money(live.base, s)}</strong></p>
             </div>
           </div>
@@ -437,7 +454,7 @@
       $("ringNote").textContent = live.state === "paused" ? "Paused" : live.state === "bidding" ? "seconds left" : "";
       ring.classList.toggle("low", live.state === "bidding" && secs <= 5);
       if (live.state === "bidding" && secs <= 5 && secs > 0 && secs !== lastTick) { lastTick = secs; sounds.tick(); }
-      showGoing(live.state === "bidding" && live.team ? (secs <= 2 && secs > 0 ? "twice" : secs <= 4 && secs > 2 ? "once" : "") : "");
+      showGoing(live.state === "paused" ? "paused" : live.state === "bidding" && live.team ? (secs <= 2 && secs > 0 ? "twice" : secs <= 4 && secs > 2 ? "once" : "") : "");
       // Time's up: the host's screen closes the sale
       if (live.state === "bidding" && left <= 0 && !closing) finalize(false);
     }
@@ -451,9 +468,9 @@
       if (!which) return;
       const b = document.createElement("div");
       b.className = `going ${which}`;
-      b.textContent = which === "once" ? "Going once…" : "Going twice…";
+      b.textContent = which === "paused" ? "⏸ Paused" : which === "once" ? "Going once…" : "Going twice…";
       $("stage").appendChild(b);
-      sounds.going();
+      if (which !== "paused") sounds.going();
     }
 
     // ---------- teams board ----------
@@ -509,7 +526,9 @@
       $("pickBtn").disabled = onLot || live.state === "closing" || !pending().length;
       $("queueNote").textContent = q ? `Queue: ${q.label} · ${q.left} to go` : "Queue empty: call from the unsold pool or end the auction.";
       $("pauseBtn").disabled = !onLot;
-      $("pauseBtn").textContent = live.state === "paused" ? "▶ Resume" : "⏸ Pause";
+      $("pauseBtn").textContent = live.state === "paused" ? "▶ Resume timer" : "⏸ Pause timer";
+      $("pauseBtn").className = `btn btn-lg ${live.state === "paused" ? "btn-sun" : "btn-dark"}`;
+      $("addTimeBtn").disabled = !onLot;
       $("soldBtn").disabled = !onLot || !live.team;
       $("unsoldBtn").disabled = !onLot;
       $("restartBtn").disabled = !live.pid || live.state === "closing" || (A.players[live.pid] || {}).status === "sold";
@@ -605,6 +624,15 @@
       else if (live.state === "paused") await update(aRef("live"), { state: "bidding", clockFrom: serverNow() - live.timerMs + Math.max(3000, live.pausedLeft || 0), pausedLeft: null });
     }
 
+    // Give the current player 10 more seconds (works while running or paused)
+    async function addTime() {
+      const live = L();
+      if (live.state === "bidding") await update(aRef("live"), { clockFrom: Math.max(live.clockFrom || 0, serverNow() - live.timerMs) + 10000 });
+      else if (live.state === "paused") await update(aRef("live"), { pausedLeft: (live.pausedLeft || 0) + 10000 });
+      else return;
+      toast("+10 seconds");
+    }
+
     async function undoLastSale() {
       const sales = Object.entries(A.sales || {}).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
       if (!sales.length) return;
@@ -672,6 +700,7 @@
     $("nextBtn").onclick = nextPlayer;
     $("pickBtn").onclick = pickPlayer;
     $("pauseBtn").onclick = togglePause;
+    $("addTimeBtn").onclick = addTime;
     $("soldBtn").onclick = () => finalize(false);
     $("unsoldBtn").onclick = async () => { if (!L().team || await confirmBox("Mark unsold?", "There are bids on this player. They'll be cleared and the player goes to the unsold pool.", { ok: "Mark unsold", danger: true })) finalize(true); };
     $("restartBtn").onclick = async () => { if (await confirmBox("Restart bidding?", "Bidding on this player starts again from the base price.", { ok: "Restart", icon: "↺" })) startLot(L().pid); };
@@ -690,7 +719,8 @@
       if (!A || A.status !== "live" || e.target.closest("input, textarea, select") || document.querySelector(".modal-back")) return;
       const k = e.key.toLowerCase();
       if (k === "n" || e.key === "ArrowRight") { if (!$("nextBtn").disabled) nextPlayer(); }
-      else if (k === "p") { if (!$("pauseBtn").disabled) togglePause(); }
+      else if (k === "p" || e.key === " ") { e.preventDefault(); if (!$("pauseBtn").disabled) togglePause(); }
+      else if (k === "t") { if (!$("addTimeBtn").disabled) addTime(); }
       else if (k === "s") { if (!$("soldBtn").disabled) finalize(false); }
       else if (k === "u") { if (!$("unsoldBtn").disabled) $("unsoldBtn").click(); }
       else if (k === "f") toggleFull();

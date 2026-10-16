@@ -195,9 +195,39 @@ export function playerTags(p, s) {
     } else if (p.foot) tags.push(p.foot === "B" ? "Two-footed" : `${hand(p.foot)}-footed`);
   }
   if (p.info) tags.push(p.info);
+  attrsOf(p).forEach(a => tags.push(a));
+  if (p.fav) tags.push(`Favourite: ${p.fav}`);
   return tags;
 }
 export const playerLine = (p, s) => playerTags(p, s).join(" · ");
+
+// Special attributes are typed as a list: "Captain, Free kicks, Fast"
+export const attrsOf = p => String((p && p.attrs) || "").split(/[,;|\n]/).map(x => x.trim()).filter(Boolean).slice(0, 8);
+
+// "Forward · Striker" (or "" when the sport has no positions)
+export function positionOf(p, s) {
+  const r = schemaFor(s && s.sport)?.roles[p.role];
+  return r ? (p.sub ? `${r.name} · ${p.sub}` : r.name) : "";
+}
+
+// The player's full profile for the big screen and phones: position, details, attributes, favourite player
+export function playerDetailsHTML(p, s) {
+  const pos = positionOf(p, s);
+  const small = [];
+  if (p.age) small.push(`Age ${p.age}`);
+  if (s && s.sport === "cricket") {
+    if (p.batHand) small.push(`${hand(p.batHand)}-hand bat`);
+    if (p.bowlHand) small.push(`${hand(p.bowlHand)}-arm bowl`);
+  } else if (p.foot) small.push(p.foot === "B" ? "Two-footed" : `${hand(p.foot)}-footed`);
+  if (p.info) small.push(p.info);
+  const attrs = attrsOf(p);
+  return `<div class="pd">
+      ${pos ? `<span class="pos-badge"><small>${safe(schemaFor(s && s.sport)?.roleLabel || "Position")}</small>${safe(pos)}</span>` : ""}
+      ${small.length ? `<p class="lot-info">${small.map(x => `<span class="tag">${safe(x)}</span>`).join("")}</p>` : ""}
+      ${attrs.length ? `<p class="attrs">${attrs.map(x => `<span class="attr">★ ${safe(x)}</span>`).join("")}</p>` : ""}
+      ${p.fav ? `<p class="fav">❤️ Favourite player: <b>${safe(p.fav)}</b></p>` : ""}
+    </div>`;
+}
 
 // Turns whatever someone typed in a spreadsheet into our codes
 export const norm = v => String(v ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -437,7 +467,7 @@ export function setupProblems(s, teams, players) {
 }
 
 // ---------- pictures ----------
-export function compressPhoto(file, size = 360) {
+export function compressPhoto(file, size = 360, quality = 0.8) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = reject;
@@ -453,12 +483,53 @@ export function compressPhoto(file, size = 360) {
         ctx.fillStyle = "#fff";
         ctx.fillRect(0, 0, w, h);
         ctx.drawImage(img, 0, 0, w, h);
-        resolve(c.toDataURL("image/jpeg", 0.8));
+        resolve(c.toDataURL("image/jpeg", quality));
       };
       img.src = reader.result;
     };
     reader.readAsDataURL(file);
   });
+}
+
+// Big landing photos: as large as fits in one database entry (200 KB of text)
+export async function compressBanner(file) {
+  for (const [size, q] of [[1600, 0.72], [1280, 0.7], [1100, 0.62], [900, 0.6], [700, 0.55]]) {
+    const src = await compressPhoto(file, size, q);
+    if (src.length <= 195000) return src;
+  }
+  throw new Error("That picture is too detailed. Try a smaller one.");
+}
+
+// An auction's own landing photos (the host uploads them in setup)
+export async function loadBanners(code, banners, cache) {
+  const ids = Object.entries(banners || {}).sort((a, b) => (a[1].order || 0) - (b[1].order || 0)).map(([id]) => id);
+  await Promise.all(ids.map(async id => {
+    const v = banners[id].v || 0;
+    if (cache[id] && cache[id].v === v) return;
+    const snap = await get(ref(db, `auctionPhotos/${code}/b_${id}`));
+    cache[id] = { v, src: snap.exists() ? snap.val() : "" };
+  }));
+  return ids.map(id => cache[id] && cache[id].src).filter(Boolean);
+}
+export function bannerHTML(srcs, cls = "") {
+  if (!srcs.length) return "";
+  return `<div class="a-banner ${cls}">${srcs.map((s, i) => `<img src="${s}" alt="" class="${i === 0 ? "on" : ""}">`).join("")}</div>`;
+}
+// Rotates every .a-banner on the page (call once)
+let bannerTimer = null;
+export function startBannerShow() {
+  if (bannerTimer) return;
+  bannerTimer = setInterval(() => document.querySelectorAll(".a-banner").forEach(box => {
+    const imgs = [...box.querySelectorAll("img")];
+    if (imgs.length < 2) return;
+    const k = imgs.findIndex(i => i.classList.contains("on"));
+    imgs.forEach((img, i) => img.classList.toggle("on", i === (k + 1) % imgs.length));
+  }), 5000);
+}
+// Uses the auction's first photo as the page background (or the sport's photo if none)
+export function setPageBackground(src) {
+  if (src) document.body.style.setProperty("--bg-img", `url("${src}")`);
+  else document.body.style.removeProperty("--bg-img");
 }
 
 // ---------- spreadsheets ----------

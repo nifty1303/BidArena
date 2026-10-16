@@ -1,0 +1,11 @@
+# Render free static site. Every push to main redeploys automatically.
+services:
+  - type: web
+    name: bidarena
+    runtime: static
+    buildCommand: echo "No build needed"
+    staticPublishPath: .
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache

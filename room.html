@@ -69,7 +69,8 @@
       safe, animate, initials, money, nextBid, stepFor, allMaxBids, sounds, unlockAudio, confetti, toCSV, downloadCSV, brandHTML, endsAt,
       catList, catMax, squadLimits, squadText, setupProblems, UNSOLD_RULES,
       catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine,
-      dialog, alertBox, confirmBox, copyText, teamBudget, purseLeftOf
+      dialog, alertBox, confirmBox, copyText, teamBudget, purseLeftOf,
+      playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction room");
@@ -110,8 +111,23 @@
         if (A.owner !== user.uid) { message(`<h2 class="title">Not your auction</h2><p class="lead">Only its host can run this room. To watch, open the viewer page with the code <b>${code}</b>.</p>`); return; }
         if (A.members) set(aRef("members"), null);     // old public member list held team PINs; members now live in auctionMembers
         render();
+        refreshBanners();
         if (await loadTeamLogos(code, A.teams, logos)) { lastKey = ""; render(); }   // a team picture changed
       });
+    }
+
+    // The auction's own photos: page background, and a slideshow while waiting for the next player
+    const bannerCache = {};
+    let bannerSrcs = [], bannerKey = null;
+    async function refreshBanners() {
+      const key = JSON.stringify(A.banners || {});
+      if (key === bannerKey) return;
+      bannerKey = key;
+      bannerSrcs = await loadBanners(code, A.banners, bannerCache);
+      setPageBackground(bannerSrcs[0]);
+      startBannerShow();
+      $("stage").dataset.idle = "";
+      if (A.status === "live") renderStage();
     }
 
     const S = () => A.settings || {};
@@ -124,7 +140,6 @@
     // Drawing
     // ============================================================
     // A player's details as small tags (type, subtype, hands, age…)
-    const tagsHTML = p => { const t = playerTags(p, S()); return t.length ? `<p class="lot-info">${t.map(x => `<span class="tag">${safe(x)}</span>`).join("")}</p>` : ""; };
 
     function render() {
       applySportTheme(S().sport);
@@ -136,7 +151,7 @@
 
       renderRequests();
       $("livePill").hidden = A.status !== "live";
-      if (A.status === "ended") return renderResults();
+      if (A.status === "ended") { $("stage").dataset.idle = ""; return renderResults(); }
       $("results").hidden = true;
       if (A.status !== "live") return renderStartScreen();
 
@@ -318,7 +333,7 @@
           const unsold = players().filter(([, p]) => p.status === "unsold").length;
           const q = queue();
           const first = !Object.keys(A.sales || {}).length && !players().some(([, p]) => p.status === "unsold");
-          const html = first && q ? `
+          const html = bannerHTML(bannerSrcs, "stage-banner") + (first && q ? `
             <div class="idle">
               <p class="bid-label">Tonight's contenders</p>
               <h2 class="title">Welcome to <span>${safe(A.title || "the auction")}</span></h2>
@@ -330,7 +345,7 @@
               <h2 class="title">${q ? safe(A.players[q.pid].name) : unsold ? `${unsold} player${unsold === 1 ? "" : "s"} in the unsold pool` : "That's everyone!"}</h2>
               <p class="lead">${pending().length} waiting · ${sold} sold · ${unsold} unsold</p>
               <p class="lead">${q ? "Press <b>Next player</b> (or N) to open bidding." : unsold ? "Call players from the <b>unsold pool</b>, or <b>End auction</b> to see the final squads." : "Press <b>End auction</b> to see the final squads."}</p>
-            </div>`;
+            </div>`);
           if (stage.dataset.idle !== html) { stage.innerHTML = html; stage.dataset.idle = html; if (changed) animate(stage); }
         }
         lastKey = key; lastSeq = -1;
@@ -349,12 +364,12 @@
             <div class="pcard" style="--cc:${cc}">
               <span class="pcard-cat">${safe(cat.name)}</span>
               <div id="lotPhoto" class="pcard-init">${safe(initials(p.name))}</div>
-              <div class="pcard-foot"><b>${safe(p.name)}</b><span>Base ${money(live.base, s)}</span></div>
+              <div class="pcard-foot"><b>${safe(p.name)}</b><span>${safe(positionOf(p, s) || `Base ${money(live.base, s)}`)}</span></div>
             </div>
             <div>
               <span class="lot-cat" style="background:${cc};color:#000">${safe(cat.name)}</span>
               <h2 class="lot-name">${safe(p.name)}</h2>
-              ${tagsHTML(p)}
+              ${playerDetailsHTML(p, s)}
               <p class="lot-base">Base price <strong>${money(live.base, s)}</strong></p>
             </div>
           </div>

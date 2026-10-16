@@ -19,7 +19,8 @@
     import {
       db, ref, get, set, update, push, onValue, serverTimestamp, serverNow, ensureGuest,
       safe, animate, initials, money, nextBid, stepFor, sounds, unlockAudio, confetti, brandHTML, endsAt,
-      catList, catMax, squadLimits, squadText, catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine, purseLeftOf
+      catList, catMax, squadLimits, squadText, catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine, purseLeftOf,
+      playerDetailsHTML, loadBanners, bannerHTML, startBannerShow, setPageBackground
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Live auctions");
@@ -39,6 +40,49 @@
     const crest = (id, size = "") => crestHTML((A.teams || {})[id], logoOf(logos, id), size);
     const photos = {};
 
+    // This auction's own landing photos (set by the host)
+    const bannerCache = {};
+    let bannerSrcs = [], bannerKey = null;
+    async function refreshBanners() {
+      const key = JSON.stringify((A && A.banners) || {});
+      if (key === bannerKey) return;
+      bannerKey = key;
+      bannerSrcs = await loadBanners(code, A.banners, bannerCache);
+      setPageBackground(bannerSrcs[0]);
+      document.querySelectorAll("[data-banner-slot]").forEach(el => { el.innerHTML = bannerHTML(bannerSrcs); });
+      startBannerShow();
+    }
+    const bannerSlot = () => `<div data-banner-slot>${bannerHTML(bannerSrcs)}</div>`;
+
+    // Keep a team phone's screen awake while the auction runs
+    let wakeLock = null;
+    async function keepAwake() {
+      try { if ("wakeLock" in navigator && !wakeLock && myTeam) { wakeLock = await navigator.wakeLock.request("screen"); wakeLock.addEventListener("release", () => { wakeLock = null; }); } } catch (e) {}
+    }
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") keepAwake(); });
+
+    // ---------- the one-tap bid bar, pinned to the bottom of a team phone ----------
+    function bidBarOn() {
+      if ($("bidBar")) return;
+      const bar = document.createElement("div");
+      bar.id = "bidBar";
+      bar.className = "bidbar";
+      bar.hidden = true;
+      bar.innerHTML = `<button id="bidBtn" class="bid-btn">Bid</button>
+        <div class="bidbar-row"><p id="pStatus" class="status-line"></p>
+          <div class="jumps"><button data-jump="2">+2 steps</button><button data-jump="5">+5 steps</button></div></div>`;
+      document.body.appendChild(bar);
+      $("bidBtn").onclick = () => placeBid(1);
+      bar.querySelectorAll("[data-jump]").forEach(b => b.onclick = () => placeBid(Number(b.dataset.jump)));
+    }
+    function bidBarOff() { $("bidBar")?.remove(); document.body.classList.remove("has-bidbar"); }
+    function bidBarShow(on) {
+      const bar = $("bidBar");
+      if (!bar) return;
+      bar.hidden = !on;
+      document.body.classList.toggle("has-bidbar", on);
+    }
+
     const SAVE_KEY = "auctionSeat";
     const saveSeat = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ code, team: myTeam })); } catch (e) {} };
     const clearSeat = () => { try { localStorage.removeItem(SAVE_KEY); } catch (e) {} };
@@ -55,6 +99,7 @@
     function showCodeForm(message = "") {
       if (stopListen) { stopListen(); stopListen = null; }
       code = null; A = null; myTeam = null;
+      bidBarOff(); setPageBackground(null); bannerKey = null; bannerSrcs = [];
       applySportTheme(null);
       setWide(true);
       $("hostPill").hidden = false;
@@ -172,6 +217,7 @@
       code = c;
       A = snap.val();
       applySportTheme(A.settings && A.settings.sport);
+      await refreshBanners();
       // A team link opens straight into that team
       const t = params.get("t"), k = params.get("k");
       if (t && k && A.teams && A.teams[t]) { await joinTeam(t, k); return; }
@@ -185,10 +231,12 @@
     // ============================================================
     async function showSeatForm(message = "") {
       setWide(false);
+      bidBarOff();
       await loadTeamLogos(code, A.teams, logos);
       const teams = Object.entries(A.teams || {});
       let chosen = null;
       view.innerHTML = `
+        ${bannerSlot()}
         <div class="join-hero">
           <h1 class="title">${safe(A.title || "Auction")}</h1>
           <p class="lead">Are you bidding for a team?</p>
@@ -230,6 +278,7 @@
         await set(ref(db, `auctionMembers/${code}/${me.uid}`), { team, pin: String(pin), name: "Team device" });
         myTeam = team;
         saveSeat();
+        keepAwake();
         listen();
       } catch (e) {
         showSeatForm("That PIN doesn't match. Check it with the host.");
@@ -249,6 +298,7 @@
         if (!A) { clearSeat(); showCodeForm("This auction has been closed."); return; }
         if (myTeam && !(A.teams || {})[myTeam]) myTeam = null;
         render();
+        refreshBanners();
         loadTeamLogos(code, A.teams, logos).then(changed => { if (changed) { $("liveShell")?.remove(); lastKey = ""; render(); } });
       });
     }
@@ -267,14 +317,15 @@
                   <span id="tCrest">${crest(myTeam, "lg")}</span>
                   <div class="grow"><h2 id="tName"></h2><p>Your team · <button class="link-btn" id="editBtn">Edit name &amp; picture</button> · <button class="link-btn" id="leaveBtn">Leave</button></p>
                     <span id="pendingTag" class="pending-tag" hidden>⏳ Change waiting for host approval</span></div></div>
+                 <div id="plot" class="plot" style="margin-top:10px"></div>
                  <div class="stats">
                    <div class="stat"><b id="stPurse"></b><span>Left</span></div>
                    <div class="stat"><b id="stMax"></b><span id="stMaxLabel">Max bid</span></div>
                    <div class="stat"><b id="stSquad"></b><span>Squad</span></div>
                  </div>
                  <div id="myCats" class="my-cats"></div>`
-               : `<div class="team-head" style="--c:var(--accent)"><div class="grow"><h2>${safe(A.title || "Auction")}</h2><p>Watching · <button class="link-btn" id="leaveBtn">Join a team</button></p></div></div>`}
-          <div id="plot" class="plot" style="margin-top:10px"></div>
+               : `<div class="team-head" style="--c:var(--accent)"><div class="grow"><h2>${safe(A.title || "Auction")}</h2><p>Watching · <button class="link-btn" id="leaveBtn">Join a team</button></p></div></div>
+                  <div id="plot" class="plot" style="margin-top:10px"></div>`}
           ${t ? `<h3 class="section-title">Your squad</h3><ul id="mySquad" class="mini-squad"></ul>
                  <h3 class="section-title">Unsold players <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:600">· tap ♡ to wishlist (only your team sees it)</span></h3>
                  <ul id="unsoldList" class="mini-squad"></ul>` : ""}
@@ -282,20 +333,22 @@
           <div id="allTeams" class="board"></div>
         </div>`;
       animate(view);
+      if (t) bidBarOn(); else bidBarOff();
       if ($("editBtn")) $("editBtn").onclick = openEditTeam;
-      $("leaveBtn").onclick = () => { clearSeat(); if (stopListen) stopListen(); stopListen = null; if (stopWish) stopWish(); stopWish = null; myTeam = null; showSeatForm(); };
+      $("leaveBtn").onclick = () => { bidBarOff(); clearSeat(); if (stopListen) stopListen(); stopListen = null; if (stopWish) stopWish(); stopWish = null; myTeam = null; showSeatForm(); };
       if (t && $("unsoldList")) $("unsoldList").addEventListener("click", e => { const b = e.target.closest("[data-wish]"); if (b) toggleWish(b.dataset.wish); });
       // This team's wishlist is private: only its own members can read it
       if (t && !stopWish) stopWish = onValue(ref(db, `auctionWish/${code}/${myTeam}`), snap => { myWish = snap.val() || {}; renderSquads(); });
     }
 
-    const tagsHTML = p => { const t = playerTags(p, S()); return t.length ? `<p class="lot-info">${t.map(x => `<span class="tag">${safe(x)}</span>`).join("")}</p>` : ""; };
 
     function render() {
       applySportTheme(S().sport);
       if (A.status === "ended") return renderFinal();
       if (A.status !== "live") {
+        bidBarOff();
         view.innerHTML = `
+          ${bannerSlot()}
           <div class="card" style="text-align:center">
             <h2 class="title" style="font-size:30px">${safe(A.title || "Auction")}</h2>
             <p class="lead">${team() ? `You're bidding for <b>${safe(team().name)}</b>.` : "You're watching."} Waiting for the host to start…</p>
@@ -340,6 +393,7 @@
       const live = L(), s = S(), plot = $("plot");
       const key = `${live.pid || ""}:${live.state}`;
       const changed = key !== lastKey;
+      bidBarShow(!!team() && ["bidding", "paused"].includes(live.state) && !!(A.players || {})[live.pid]);
       if (live.state === "idle" || !live.pid || !(A.players || {})[live.pid]) {
         if (changed) { plot.innerHTML = `<div class="idle" style="padding:40px 10px"><h2 class="title" style="font-size:26px">Waiting for the next player…</h2></div>`; animate(plot); }
         lastKey = key; lastSeq = -1;
@@ -356,28 +410,17 @@
             <div class="grow">
               <span class="lot-cat" style="background:${cc};color:#000">${safe(cat.name)}${live.round > 1 ? " · unsold round" : ""}</span>
               <h2 class="lot-name">${safe(p.name)}</h2>
-              ${tagsHTML(p)}
               <p class="lot-base">Base <strong>${money(live.base, s)}</strong> · +${money(stepFor(live.cat, s), s)} a bid</p>
             </div>
           </div>
+          ${playerDetailsHTML(p, s)}
           <div class="plot-bid">
             <div><p class="bid-label" id="pLabel"></p><p class="bid-amount" id="pAmount"></p><div id="pLeader"></div></div>
           </div>
           <div class="timebar" id="pBar"><i></i></div>
-          <p class="time-left" id="pLeft"></p>
-          ${team() ? `
-            <button id="bidBtn" class="bid-btn">Bid</button>
-            <div class="jumps">
-              <button data-jump="2">+2 steps</button>
-              <button data-jump="5">+5 steps</button>
-            </div>
-            <p id="pStatus" class="status-line"></p>` : ""}`;
+          <p class="time-left" id="pLeft"></p>`;
         animate(plot);
         photoFor(live.pid).then(src => { if (src && L().pid === live.pid && $("pPhoto")) $("pPhoto").outerHTML = `<img id="pPhoto" class="pcard-photo" src="${src}" alt="">`; });
-        if (team()) {
-          $("bidBtn").onclick = () => placeBid(1);
-          plot.querySelectorAll("[data-jump]").forEach(b => b.onclick = () => placeBid(Number(b.dataset.jump)));
-        }
         lastSeq = -1;
         wasLeading = false;
       }
@@ -463,12 +506,12 @@
           if (going !== "paused" && myTeam && live.team !== myTeam) { try { navigator.vibrate && navigator.vibrate(60); } catch (e) {} }
         }
       }
-      if (!team() || !$("bidBtn")) return;
+      if (!team() || !$("bidBtn") || placing) return;
       const st = bidState(1);
       const btn = $("bidBtn");
       btn.disabled = !st.ok;
       btn.classList.toggle("leading", !!st.leading);
-      btn.innerHTML = st.leading ? "You're leading ✓" : st.amount ? `Bid ${money(st.amount, s)}<small>${live.team ? `+${money(stepFor(live.cat, s), s)}` : "Opening bid"}</small>` : "Bid";
+      btn.innerHTML = st.leading ? "You're leading ✓" : st.amount ? `Bid ${money(st.amount, s)}<small>${live.state === "paused" ? "Paused by the host" : live.team ? `+${money(stepFor(live.cat, s), s)} · tap once` : "Opening bid · tap once"}</small>` : "Bid";
       $("pStatus").textContent = st.ok ? "" : st.why || "";
       $("pStatus").className = `status-line ${st.leading ? "good" : st.why ? "bad" : ""}`;
       document.querySelectorAll("[data-jump]").forEach(b => {
@@ -479,13 +522,17 @@
     }
     setInterval(() => { if (A && A.status === "live") tick(); }, 200);
 
+    let placing = false;
     async function placeBid(jump) {
       const st = bidState(jump);
-      if (!st.ok) return;
+      if (!st.ok || placing) return;
+      placing = true;
       unlockAudio();
+      keepAwake();
       const live = L();
       const btn = $("bidBtn");
       btn.disabled = true;
+      btn.innerHTML = `Bidding ${money(st.amount, S())}…`;
       const key = push(ref(db, `auctions/${code}/bids/${live.pid}`)).key;
       try {
         // The database accepts only one bid per step, so if two teams tap at once only the first counts
@@ -499,9 +546,11 @@
         sounds.bid();
         try { navigator.vibrate && navigator.vibrate(40); } catch (e) {}
       } catch (e) {
-        $("pStatus").textContent = "Someone else bid first. Check the new price and try again.";
+        $("pStatus").textContent = "Someone else bid first. Tap again at the new price.";
         $("pStatus").className = "status-line bad";
+        try { navigator.vibrate && navigator.vibrate([60, 40, 60]); } catch (e2) {}
       }
+      placing = false;
       tick();
     }
 
@@ -598,7 +647,9 @@
       const s = S();
       const players = Object.entries(A.players || {});
       const teams = Object.entries(A.teams || {}).sort((a, b) => (a[0] === myTeam ? -1 : b[0] === myTeam ? 1 : 0));
+      bidBarOff();
       view.innerHTML = `
+        ${bannerSlot()}
         <h1 class="title" style="margin-bottom:6px">Squads <span>revealed</span></h1>
         <p class="lead" style="margin-bottom:14px">${safe(A.title || "Auction")} has finished.</p>
         <div class="results-grid">${teams.map(([id, t]) => {

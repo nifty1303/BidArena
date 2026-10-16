@@ -4,13 +4,13 @@
 import { firebaseConfig } from "./config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getDatabase, ref, onValue, get, set, update, push, serverTimestamp
+  getDatabase, ref, onValue, get, set, update, push, serverTimestamp, onDisconnect
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
-export { ref, onValue, get, set, update, push, serverTimestamp };
+export { ref, onValue, get, set, update, push, serverTimestamp, onDisconnect };
 
 export const APP_NAME = "BidArena";   // rename the app here
 
@@ -41,6 +41,14 @@ export async function ensureGuest() {
   return user || (await signInAnonymously(auth)).user;
 }
 export const signOutUser = () => signOut(auth);
+
+// ---------- connection ----------
+// cb(true/false) whenever this device connects to or loses the database
+export const watchConnection = cb => onValue(ref(db, ".info/connected"), snap => cb(!!snap.val()));
+
+// ---------- bidder names (one name per person, unique in an auction) ----------
+export const cleanName = n => String(n || "").replace(/[.#$\[\]\/]/g, "").replace(/\s+/g, " ").trim().slice(0, 24);
+export const nameKeyOf = n => cleanName(n).toLowerCase();
 
 // ---------- small helpers ----------
 export function safe(text) {
@@ -89,6 +97,7 @@ export const DEFAULT_SETTINGS = {
   squadMode: "range", squadMin: 11, squadMax: 15,
   timerSec: 20,
   order: "listed",
+  fairForced: false,       // a player only one team can buy goes at the category's lowest sale price
   cats: {
     bat:  { name: "Batters",       min: 3, max: 6, base: 50, step: 10, unsold: "afterAll", order: 1 },
     bowl: { name: "Bowlers",       min: 3, max: 6, base: 50, step: 10, unsold: "afterAll", order: 2 },
@@ -719,4 +728,62 @@ export async function copyText(text) {
     });
     return false;
   }
+}
+
+
+// ============================================================
+// Bidders: team phones ask to bid, the host approves or removes them
+// ============================================================
+// mountBidders(box, code, () => teams, crestFn, onCount(pending, approved))
+export function mountBidders(box, code, getTeams, crestFn, onCount) {
+  let members = {}, online = {}, gotMembers = false, gotOnline = false;
+  const draw = () => {
+    if (!gotMembers || !gotOnline) { box.innerHTML = `<p class="muted">Loading…</p>`; return; }
+    const teams = Object.entries(getTeams() || {});
+    const all = Object.entries(members);
+    const pending = all.filter(([, m]) => !m.approved);
+    if (onCount) onCount(pending.length, all.length - pending.length);
+    const row = ([uid, m]) => `
+      <div class="bidder ${m.approved ? "ok" : "wait"}">
+        <span class="dot ${online[uid] ? "on" : ""}" title="${online[uid] ? "Connected now" : "Not connected"}"></span>
+        <div class="grow"><b>${safe(m.name || "?")}</b>
+          <small>${m.approved ? (online[uid] ? "Approved · connected" : "Approved · not connected") : "Waiting for your approval"}</small></div>
+        ${m.approved ? "" : `<button class="btn btn-sun btn-sm" data-bapprove="${uid}">Approve</button>`}
+        <button class="btn btn-danger btn-sm" data-bremove="${uid}">${m.approved ? "Remove" : "Reject"}</button>
+      </div>`;
+    box.innerHTML = `
+      ${pending.length > 1 ? `<div class="row" style="justify-content:flex-end;margin-bottom:8px"><button class="btn btn-sun btn-sm" data-bapproveall>Approve all ${pending.length} waiting</button></div>` : ""}
+      <div class="bidder-teams">${teams.map(([tid, t]) => {
+        const mine = all.filter(([, m]) => m.team === tid).sort((a, b) => (a[1].approved === b[1].approved ? 0 : a[1].approved ? 1 : -1));
+        return `<div class="bidder-team" style="--c:${safe(t.color || "#888")}">
+          <div class="bidder-team-head">${crestFn(tid, "sm")}<b>${safe(t.name)}</b><span class="muted">${mine.filter(([, m]) => m.approved).length} approved</span></div>
+          ${mine.map(row).join("") || `<p class="muted" style="margin:6px 0 0;font-size:14px">No one has asked to bid yet.</p>`}
+        </div>`;
+      }).join("")}</div>
+      <p class="hint">People open their team link, enter their name and ask to bid. Only approved people can bid. If a phone drops out, it reconnects by itself; on a new phone they ask again, and you approve them again (remove the old phone first if they reuse the same name).</p>`;
+  };
+  const stop1 = onValue(ref(db, `auctionMembers/${code}`), snap => { members = snap.val() || {}; gotMembers = true; draw(); });
+  const stop2 = onValue(ref(db, `auctionOnline/${code}`), snap => { online = snap.val() || {}; gotOnline = true; draw(); });
+  const onClick = async e => {
+    const ap = e.target.closest("[data-bapprove]"), rm = e.target.closest("[data-bremove]"), all = e.target.closest("[data-bapproveall]");
+    if (ap) await set(ref(db, `auctionMembers/${code}/${ap.dataset.bapprove}/approved`), true);
+    if (all) {
+      const ch = {};
+      Object.entries(members).forEach(([uid, m]) => { if (!m.approved) ch[`auctionMembers/${code}/${uid}/approved`] = true; });
+      await update(ref(db), ch);
+    }
+    if (rm) {
+      const uid = rm.dataset.bremove, m = members[uid] || {};
+      const ok = await confirmBox(m.approved ? `Remove ${m.name}?` : `Reject ${m.name}?`,
+        m.approved ? "This phone stops bidding right away. Their name is freed, so they can ask again from another phone." : "They won't be able to bid unless they ask again.",
+        { ok: m.approved ? "Remove" : "Reject", danger: true });
+      if (!ok) return;
+      const ch = { [`auctionMembers/${code}/${uid}`]: null, [`auctionOnline/${code}/${uid}`]: null };
+      if (m.nameKey) ch[`auctionNames/${code}/${m.nameKey}`] = null;
+      await update(ref(db), ch);
+    }
+  };
+  box.addEventListener("click", onClick);
+  draw();
+  return { stop() { stop1(); stop2(); box.removeEventListener("click", onClick); }, redraw: draw, members: () => members };
 }

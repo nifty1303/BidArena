@@ -11,16 +11,18 @@
 </head>
 <body data-sport="home">
   <main class="wrap phone">
-    <div class="topbar"><span id="brandSlot"></span><a class="host-pill" id="hostPill" href="host.html"><span aria-hidden="true">🔨</span> Host an auction</a></div>
+    <div class="topbar"><span id="brandSlot"></span><span class="row" style="gap:8px"><span id="acctSlot"></span><a class="host-pill" id="hostPill" href="host.html"><span aria-hidden="true">🔨</span> Host an auction</a></span></div>
     <section id="view"></section>
   </main>
+  <div id="connBar" class="conn-bar" hidden>⚠️ Connection lost. Reconnecting… Your team and approval are kept.</div>
 
   <script type="module">
     import {
       db, ref, get, set, update, push, onValue, serverTimestamp, serverNow, ensureGuest,
       safe, animate, initials, money, nextBid, stepFor, sounds, unlockAudio, confetti, brandHTML, endsAt,
       catList, catMax, squadLimits, squadText, catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine, purseLeftOf,
-      playerDetailsHTML, loadBanners, bannerHTML, startBannerShow, setPageBackground
+      playerDetailsHTML, loadBanners, bannerHTML, startBannerShow, setPageBackground,
+      onDisconnect, watchConnection, cleanName, nameKeyOf, currentUser, isHostAccount, confirmBox
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Live auctions");
@@ -82,6 +84,70 @@
       bar.hidden = !on;
       document.body.classList.toggle("has-bidbar", on);
     }
+
+    // ---------- my bidder membership (team, name, approved by the host?) ----------
+    let myMember = null, stopMember = null;
+    const approved = () => !!(myMember && myMember.approved && myMember.team === myTeam);
+    const memberRef = () => ref(db, `auctionMembers/${code}/${me.uid}`);
+
+    // Follows this phone's membership: approval unlocks bidding, removal sends it back to the join form
+    function watchMe() {
+      if (stopMember) stopMember();
+      let first = true;
+      stopMember = onValue(memberRef(), snap => {
+        const m = snap.val(), had = myMember;
+        myMember = m;
+        if (!m && had && !first) {
+          stopAll();
+          myTeam = null; clearSeat();
+          showSeatForm("The host removed this phone from bidding. Ask again if that was a mistake.");
+          return;
+        }
+        first = false;
+        const changed = myTeam !== (m ? m.team : null) || !!(had && had.approved) !== !!(m && m.approved);
+        myTeam = m ? m.team : null;
+        saveSeat();
+        if (m) setPresence();
+        if (changed && A) {
+          if (stopWish) { stopWish(); stopWish = null; }
+          $("liveShell")?.remove(); lastKey = ""; render();
+          if (m && m.approved && !(had && had.approved)) toast("✓ You're approved. You can bid now!");
+        }
+      });
+    }
+    function stopAll() {
+      bidBarOff();
+      [stopListen, stopWish, stopMember].forEach(f => f && f());
+      stopListen = stopWish = stopMember = null;
+      myMember = null;
+    }
+
+    // Tells the host this phone is connected; cleared automatically when it drops
+    let presenceKey = "";
+    function setPresence(force = false) {
+      if (!code || !me || !myMember) return;
+      const key = `${code}/${me.uid}`;
+      if (key === presenceKey && !force) return;      // once per connection
+      presenceKey = key;
+      const r = ref(db, `auctionOnline/${code}/${me.uid}`);
+      onDisconnect(r).remove().catch(() => {});
+      set(r, serverTimestamp()).catch(() => {});
+    }
+
+    // Connection lost / back: banner, and bidding pauses on this phone until it's back
+    let isOnline = true, offTimer = null;
+    watchConnection(on => {
+      isOnline = on;
+      clearTimeout(offTimer);
+      if (on) { $("connBar").hidden = true; setPresence(true); }
+      else { presenceKey = ""; offTimer = setTimeout(() => { if (!isOnline) $("connBar").hidden = false; }, 2000); }
+    });
+
+    // Signed-in hosts get a link to their profile and auctions
+    currentUser().then(u => {
+      if (!isHostAccount(u)) return;
+      $("acctSlot").innerHTML = `<a class="acct-chip" href="host.html?view=profile" title="My profile">${u.photoURL ? `<img src="${safe(u.photoURL)}" alt="" referrerpolicy="no-referrer">` : `<span>${safe(initials(u.displayName || u.email))}</span>`}<b>${safe((u.displayName || u.email || "").split(" ")[0])}</b></a>`;
+    });
 
     const SAVE_KEY = "auctionSeat";
     const saveSeat = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ code, team: myTeam })); } catch (e) {} };
@@ -218,38 +284,44 @@
       A = snap.val();
       applySportTheme(A.settings && A.settings.sport);
       await refreshBanners();
-      // A team link opens straight into that team
+      // Already joined on this phone (even after a disconnect or closing the browser): carry on
       const t = params.get("t"), k = params.get("k");
-      if (t && k && A.teams && A.teams[t]) { await joinTeam(t, k); return; }
       const mine = (await get(ref(db, `auctionMembers/${c}/${me.uid}`))).val();
-      if (mine && A.teams && A.teams[mine.team]) { myTeam = mine.team; saveSeat(); listen(); return; }
+      if (mine && A.teams && A.teams[mine.team] && (!t || t === mine.team)) { myTeam = mine.team; myMember = mine; saveSeat(); listen(); return; }
+      // A team link opens that team's join form: just type your name
+      if (t && k && A.teams && A.teams[t]) { showSeatForm("", { team: t, pin: k }); return; }
       showSeatForm();
     }
 
     // ============================================================
     // Step 2: pick your team (with its PIN), or just watch
     // ============================================================
-    async function showSeatForm(message = "") {
+    async function showSeatForm(message = "", preset = null) {
       setWide(false);
       bidBarOff();
       await loadTeamLogos(code, A.teams, logos);
       const teams = Object.entries(A.teams || {});
-      let chosen = null;
+      let chosen = preset ? preset.team : null;
+      let lastName = "";
+      try { lastName = localStorage.getItem("bidderName") || ""; } catch (e) {}
       view.innerHTML = `
         ${bannerSlot()}
         <div class="join-hero">
           <h1 class="title">${safe(A.title || "Auction")}</h1>
-          <p class="lead">Are you bidding for a team?</p>
+          <p class="lead">${preset ? "Ask the host to let you bid" : "Are you bidding for a team?"}</p>
         </div>
         <div class="card">
-          <p class="label" style="margin-top:0">Your team</p>
-          <div class="team-pick">${teams.map(([id, t]) => `
-            <button class="team-opt" data-team="${id}">${crest(id, "sm")}${safe(t.name)}</button>`).join("")}</div>
-          <label class="label" for="pinIn">Team PIN</label>
-          <input id="pinIn" class="input big" maxlength="4" inputmode="numeric" autocomplete="off" placeholder="••••">
-          <button id="teamGo" class="btn btn-sun btn-block btn-lg" style="margin-top:12px" disabled>Choose your team</button>
+          ${preset ? `<div class="team-chosen" style="--c:${safe(A.teams[preset.team].color)}">${crest(preset.team, "lg")}<div><small>Bidding for</small><b>${safe(A.teams[preset.team].name)}</b></div></div>`
+            : `<p class="label" style="margin-top:0">Your team</p>
+               <div class="team-pick">${teams.map(([id, t]) => `
+                 <button class="team-opt" data-team="${id}">${crest(id, "sm")}${safe(t.name)}</button>`).join("")}</div>`}
+          <label class="label" for="nameIn">Your name</label>
+          <input id="nameIn" class="input big" maxlength="24" autocomplete="name" placeholder="e.g. Rahim Khan" value="${safe(lastName)}">
+          ${preset ? "" : `<label class="label" for="pinIn">Team PIN</label>
+            <input id="pinIn" class="input big" maxlength="4" inputmode="numeric" autocomplete="off" placeholder="••••">`}
+          <button id="teamGo" class="btn btn-sun btn-block btn-lg" style="margin-top:12px" ${preset ? "" : "disabled"}>${preset ? "Ask to bid" : "Choose your team"}</button>
           <p id="seatErr" class="err">${safe(message)}</p>
-          <p class="hint" style="text-align:center">Your team's PIN comes from the host.</p>
+          <p class="hint" style="text-align:center">The host approves every bidder. Each person needs their own name${preset ? "" : ", and the PIN comes from the host"}.</p>
           <button id="watchGo" class="btn btn-light btn-block" style="margin-top:14px">Just watch</button>
         </div>`;
       animate(view);
@@ -257,31 +329,49 @@
         chosen = b.dataset.team;
         view.querySelectorAll("[data-team]").forEach(x => x.classList.toggle("on", x === b));
         $("teamGo").disabled = false;
-        $("teamGo").textContent = `Bid for ${A.teams[chosen].name}`;
-        $("pinIn").focus();
+        $("teamGo").textContent = `Ask to bid for ${A.teams[chosen].name}`;
+        ($("nameIn").value ? $("pinIn") : $("nameIn")).focus();
       });
       const go = () => {
-        const pin = $("pinIn").value.trim();
+        const name = cleanName($("nameIn").value);
+        const pin = preset ? preset.pin : $("pinIn").value.trim();
         if (!chosen) { $("seatErr").textContent = "Tap your team first."; return; }
+        if (name.length < 2) { $("seatErr").textContent = "Type your name (at least 2 letters)."; $("nameIn").focus(); return; }
         if (!/^\d{4}$/.test(pin)) { $("seatErr").textContent = "The PIN has 4 numbers."; return; }
-        joinTeam(chosen, pin);
+        joinTeam(chosen, pin, name, preset);
       };
       $("teamGo").onclick = go;
-      $("pinIn").addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+      view.querySelectorAll("#nameIn, #pinIn").forEach(i => i.addEventListener("keydown", e => { if (e.key === "Enter") go(); }));
       $("watchGo").onclick = () => { myTeam = null; saveSeat(); listen(); };
     }
 
-    async function joinTeam(team, pin) {
+    // Ask to bid: the database checks the PIN and that the name is free; the host then approves
+    async function joinTeam(team, pin, name, preset) {
       unlockAudio();
+      $("teamGo").disabled = true;
+      $("teamGo").textContent = "Sending…";
+      const key = nameKeyOf(name);
       try {
-        // The database checks the PIN; a wrong one is refused
-        await set(ref(db, `auctionMembers/${code}/${me.uid}`), { team, pin: String(pin), name: "Team device" });
+        const holder = (await get(ref(db, `auctionNames/${code}/${key}`))).val();
+        if (holder && holder !== me.uid) {
+          showSeatForm(`“${name}” is already taken in this auction. Add your surname or a nickname. If it's you on a new phone, ask the host to remove your old phone first.`, preset);
+          return;
+        }
+        const prev = (await get(memberRef())).val();
+        if (prev && prev.approved) await set(memberRef(), null);    // switching team needs a fresh approval
+        const changes = {
+          [`auctionNames/${code}/${key}`]: me.uid,
+          [`auctionMembers/${code}/${me.uid}`]: { team, pin: String(pin), name, nameKey: key, approved: false, at: serverTimestamp() }
+        };
+        if (prev && prev.nameKey && prev.nameKey !== key) changes[`auctionNames/${code}/${prev.nameKey}`] = null;
+        await update(ref(db), changes);
+        try { localStorage.setItem("bidderName", name); } catch (e) {}
         myTeam = team;
         saveSeat();
         keepAwake();
         listen();
       } catch (e) {
-        showSeatForm("That PIN doesn't match. Check it with the host.");
+        showSeatForm(preset ? "This team link no longer works. Ask the host for a new one." : "That PIN doesn't match. Check it with the host.", preset);
       }
     }
 
@@ -293,9 +383,10 @@
       history.replaceState(null, "", `?a=${code}`);
       if (stopListen) stopListen();
       lastKey = ""; lastSeq = -1;
+      watchMe();
       stopListen = onValue(ref(db, `auctions/${code}`), snap => {
         A = snap.val();
-        if (!A) { clearSeat(); showCodeForm("This auction has been closed."); return; }
+        if (!A) { stopAll(); clearSeat(); showCodeForm("This auction has been closed."); return; }
         if (myTeam && !(A.teams || {})[myTeam]) myTeam = null;
         render();
         refreshBanners();
@@ -315,8 +406,9 @@
         <div id="liveShell">
           ${t ? `<div class="team-head" id="teamHead" style="--c:${safe(t.color)}">
                   <span id="tCrest">${crest(myTeam, "lg")}</span>
-                  <div class="grow"><h2 id="tName"></h2><p>Your team · <button class="link-btn" id="editBtn">Edit name &amp; picture</button> · <button class="link-btn" id="leaveBtn">Leave</button></p>
+                  <div class="grow"><h2 id="tName"></h2><p>${approved() ? "Bidding as" : "Asked to bid as"} <b>${safe((myMember && myMember.name) || "")}</b>${approved() ? ` · <button class="link-btn" id="editBtn">Edit team</button>` : ""} · <button class="link-btn" id="leaveBtn">Leave</button></p>
                     <span id="pendingTag" class="pending-tag" hidden>⏳ Change waiting for host approval</span></div></div>
+                 ${approved() ? "" : `<div class="approval-note">⏳ <b>Waiting for the host to approve you.</b> Keep this page open: the bid button unlocks by itself.</div>`}
                  <div id="plot" class="plot" style="margin-top:10px"></div>
                  <div class="stats">
                    <div class="stat"><b id="stPurse"></b><span>Left</span></div>
@@ -335,10 +427,20 @@
       animate(view);
       if (t) bidBarOn(); else bidBarOff();
       if ($("editBtn")) $("editBtn").onclick = openEditTeam;
-      $("leaveBtn").onclick = () => { bidBarOff(); clearSeat(); if (stopListen) stopListen(); stopListen = null; if (stopWish) stopWish(); stopWish = null; myTeam = null; showSeatForm(); };
+      $("leaveBtn").onclick = async () => {
+        if (t && !await confirmLeave()) return;
+        const m = myMember;
+        stopAll(); clearSeat();
+        if (t && m) {
+          const ch = { [`auctionMembers/${code}/${me.uid}`]: null, [`auctionOnline/${code}/${me.uid}`]: null };
+          if (m.nameKey) ch[`auctionNames/${code}/${m.nameKey}`] = null;
+          try { await update(ref(db), ch); } catch (e) {}
+        }
+        myTeam = null; showSeatForm();
+      };
       if (t && $("unsoldList")) $("unsoldList").addEventListener("click", e => { const b = e.target.closest("[data-wish]"); if (b) toggleWish(b.dataset.wish); });
       // This team's wishlist is private: only its own members can read it
-      if (t && !stopWish) stopWish = onValue(ref(db, `auctionWish/${code}/${myTeam}`), snap => { myWish = snap.val() || {}; renderSquads(); });
+      if (t && approved() && !stopWish) stopWish = onValue(ref(db, `auctionWish/${code}/${myTeam}`), snap => { myWish = snap.val() || {}; renderSquads(); });
     }
 
 
@@ -453,7 +555,7 @@
         wrap.className = "stamp-wrap";
         if (live.state === "sold" && leader) {
           const mine = live.team === myTeam;
-          wrap.innerHTML = `<div class="stamp" style="--c:${safe(leader.color)};padding:18px 26px">${crest(live.team, "lg")}<div class="stamp-word" style="font-size:64px">${mine ? "YOURS!" : "SOLD!"}</div><div class="stamp-sub" style="font-size:18px">${safe(leader.name)} · ${money(live.amount, s)}</div></div>`;
+          wrap.innerHTML = `<div class="stamp" style="--c:${safe(leader.color)};padding:18px 26px">${crest(live.team, "lg")}<div class="stamp-word" style="font-size:64px">${mine ? "YOURS!" : "SOLD!"}</div><div class="stamp-sub" style="font-size:18px">${safe(leader.name)} · ${money(live.amount, s)}</div>${live.forced ? `<div class="stamp-sub" style="font-size:14px;opacity:.85">Auto-assigned: only team left that needs one</div>` : ""}</div>`;
           plot.appendChild(wrap);
           if (mine) { confetti(plot, leader.color); sounds.sold(); }
         } else {
@@ -472,6 +574,8 @@
       if (!t) return { ok: false };
       let amount = nextBid(live, s);
       for (let k = 1; k < jump; k++) amount += stepFor(live.cat, s);
+      if (!approved()) return { ok: false, why: "Waiting for the host to approve you", amount };
+      if (!isOnline) return { ok: false, why: "Reconnecting…", amount };
       if (live.state === "paused") return { ok: false, why: "Paused by the host", amount };
       if (live.state !== "bidding") return { ok: false, why: "", amount };
       if (endsAt(live) - serverNow() <= 0) return { ok: false, why: "Time's up", amount };
@@ -541,7 +645,7 @@
             pid: live.pid, cat: live.cat, round: live.round || 1, state: "bidding", base: live.base, amount: st.amount, team: myTeam,
             seq: (live.seq || 0) + 1, timerMs: live.timerMs, clockFrom: serverTimestamp()
           },
-          [`auctions/${code}/bids/${live.pid}/${key}`]: { team: myTeam, amount: st.amount, at: serverTimestamp() }
+          [`auctions/${code}/bids/${live.pid}/${key}`]: { team: myTeam, amount: st.amount, at: serverTimestamp(), by: (myMember && myMember.name) || "" }
         });
         sounds.bid();
         try { navigator.vibrate && navigator.vibrate(40); } catch (e) {}
@@ -621,6 +725,8 @@
       };
     }
 
+    const confirmLeave = () => confirmBox("Leave this team?", "You'll need to ask again, and the host approves you again.", { ok: "Leave team", danger: true });
+
     function toast(text) {
       const d = document.createElement("div");
       d.className = "toast";
@@ -630,6 +736,7 @@
     }
 
     async function toggleWish(pid) {
+      if (!approved()) return toast("You can wishlist once the host approves you.");
       const on = !myWish[pid];
       for (let attempt = 0; attempt < 4; attempt++) {
         const count = (await get(ref(db, `auctions/${code}/wishCount/${pid}`))).val() || 0;
@@ -678,7 +785,12 @@
         try {
           me = await ensureGuest();
           const snap = await get(ref(db, `auctions/${saved.code}`));
-          if (snap.exists()) { code = saved.code; A = snap.val(); myTeam = saved.team && A.teams && A.teams[saved.team] ? saved.team : null; listen(); return; }
+          if (snap.exists()) {
+            code = saved.code; A = snap.val();
+            myMember = (await get(memberRef())).val();
+            myTeam = myMember && A.teams && A.teams[myMember.team] ? myMember.team : null;
+            listen(); return;
+          }
         } catch (e) {}
         clearSeat();
       }

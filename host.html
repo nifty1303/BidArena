@@ -58,6 +58,8 @@
         <a id="roomBtn" class="btn btn-sun">Open auction room ▶</a>
       </div>
       <p id="editErr" class="err"></p>
+      <div id="endedBar" class="ended-bar" hidden>🏁 <span><b>This auction is finished.</b> Setup is locked so the results can't change by accident. Sharing still works.</span>
+        <button id="reopenSetup" class="btn btn-sun btn-sm">Reopen auction</button></div>
 
       <div class="tabs" role="tablist">
         <button class="tab on" data-tab="basics"><span class="step">1</span>Basics</button>
@@ -404,6 +406,7 @@
       $("statusPill").className = `pill ${st}`;
       $("statusPill").textContent = (st === "live" ? "Live" : st === "ended" ? "Finished" : "Setup") + (role === "editor" ? " · Collaborator" : "");
       $("roomBtn").textContent = st === "ended" ? "See results ▶" : "Open auction room ▶";
+      document.querySelectorAll(".pane").forEach(p => p.classList.remove("locked-pane"));
       show("editView");
       showTab("basics");
     }
@@ -468,8 +471,30 @@
       document.querySelectorAll(".pane").forEach(p => { p.hidden = p.id !== `pane-${name}`; });
       ({ basics: renderBasics, cats: renderCats, teams: renderTeams, players: renderPlayers, share: renderShare })[name]();
       updateTop();
+      lockIfEnded();
       animate($(`pane-${name}`));
     }
+
+    // ---------- a finished auction is read-only (except sharing), until it's reopened ----------
+    const ended = () => !!A && A.status === "ended";
+    function lockIfEnded() {
+      $("endedBar").hidden = !ended();
+      $("titleInput").disabled = ended();
+      if (!ended()) return;
+      ["basics", "cats", "teams", "players"].forEach(n => {
+        const pane = $(`pane-${n}`);
+        pane.classList.add("locked-pane");
+        pane.querySelectorAll("input, select, textarea, button").forEach(el => { if (!el.matches("[data-iview], [data-goto]")) el.disabled = true; });
+      });
+    }
+    // panes redraw themselves after loading pictures etc.: keep them locked
+    new MutationObserver(() => { if (ended()) lockIfEnded(); })
+      .observe(document.querySelector("#editView"), { childList: true, subtree: true });
+    $("reopenSetup").onclick = async () => {
+      if (!await confirmBox("Reopen the auction?", "Setup unlocks and the auction is live again. Squads and budgets stay as they are.", { ok: "Reopen", icon: "🔓" })) return;
+      await update(ref(db), { [`auctions/${code}/status`]: "live", [`auctionsByOwner/${user.uid}/${code}/status`]: "live" });
+      openAuction(code);
+    };
     document.querySelectorAll(".tab").forEach(t => { t.onclick = () => showTab(t.dataset.tab); });
 
     // ============================================================

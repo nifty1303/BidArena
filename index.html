@@ -22,7 +22,8 @@
       safe, animate, initials, money, nextBid, stepFor, sounds, unlockAudio, confetti, brandHTML, endsAt,
       catList, catMax, squadLimits, squadText, catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine, purseLeftOf,
       playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
-      onDisconnect, watchConnection, cleanName, nameKeyOf, currentUser, isHostAccount, confirmBox
+      onDisconnect, watchConnection, cleanName, nameKeyOf, currentUser, isHostAccount, confirmBox,
+      audioReady, showBreak, squadCardBlob, squadCSV, shareOrDownload, downloadCSV
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Live auctions");
@@ -71,11 +72,9 @@
       bar.className = "bidbar";
       bar.hidden = true;
       bar.innerHTML = `<button id="bidBtn" class="bid-btn">Bid</button>
-        <div class="bidbar-row"><p id="pStatus" class="status-line"></p>
-          <div class="jumps"><button data-jump="2">+2 steps</button><button data-jump="5">+5 steps</button></div></div>`;
+        <div class="bidbar-row"><p id="pStatus" class="status-line"></p></div>`;
       document.body.appendChild(bar);
       $("bidBtn").onclick = () => placeBid(1);
-      bar.querySelectorAll("[data-jump]").forEach(b => b.onclick = () => placeBid(Number(b.dataset.jump)));
     }
     function bidBarOff() { $("bidBar")?.remove(); document.body.classList.remove("has-bidbar"); }
     function bidBarShow(on) {
@@ -505,7 +504,8 @@
                    <div class="stat"><b id="stMax"></b><span id="stMaxLabel">Max bid</span></div>
                    <div class="stat"><b id="stSquad"></b><span>Squad</span></div>
                  </div>
-                 <div id="myCats" class="my-cats"></div>`
+                 <div id="myCats" class="my-cats"></div>
+                 <p id="needsLine" class="needs-line"></p>`
                : `<div class="team-head" style="--c:var(--accent)"><div class="grow"><h2>${safe(A.title || "Auction")}</h2><p>Watching as <b>${safe(myName())}</b> · <button class="link-btn" id="leaveBtn">Join a team</button></p></div></div>
                   <div id="plot" class="plot" style="margin-top:10px"></div>`}
           ${t ? `<h3 class="section-title">Your squad</h3><ul id="mySquad" class="mini-squad"></ul>
@@ -514,6 +514,8 @@
           <h3 class="section-title">All teams</h3>
           <div id="allTeams" class="board"></div>
         </div>`;
+      view.querySelector("#liveShell").insertAdjacentHTML("afterbegin", `<button type="button" id="soundBtn" class="sound-banner" ${audioReady() ? "hidden" : ""}>🔊 Tap to turn on sounds</button>`);
+      $("soundBtn").onclick = () => { unlockAudio(); setTimeout(() => { sounds.bid(); $("soundBtn") && ($("soundBtn").hidden = audioReady()); }, 60); };
       animate(view);
       if (t) bidBarOn(); else bidBarOff();
       if ($("editBtn")) $("editBtn").onclick = openEditTeam;
@@ -572,6 +574,16 @@
         const cls = n >= catMax(c) ? "done" : n < c.min ? "short" : "ok";
         return `<span class="tc ${cls} ${live.cat === c.id && onLot ? "now" : ""}" style="--cc:${catColour(s, c.id)}">${safe(c.name)} ${n}/${c.min}${c.max ? "–" + c.max : "+"}</span>`;
       }).join("");
+      // In plain words: what this team still has to buy, and why its max bid may be lower than its money
+      const needs = catList(s).map(c => [c, Math.max(0, c.min - ((t.cat && t.cat[c.id]) || 0))]).filter(([, n]) => n > 0);
+      const owed = needs.reduce((a, [, n]) => a + n, 0), short = Math.max(0, lim.min - (t.count || 0));
+      const parts = needs.map(([c, n]) => `<b>${n} ${safe(c.name)}</b>`);
+      if (short > owed) parts.push(`<b>${short - owed} more</b> of any kind`);
+      let html = parts.length ? `📋 You still need ${parts.join(", ")}.` : `✅ All your minimums are met.`;
+      const mb = onLot ? ((t.maxBid && t.maxBid[live.cat]) || 0) : null, left = purseLeftOf(t, s);
+      if (onLot && mb > 0 && mb < left) html += ` <span class="reserve">${money(left - mb, s)} is kept back for those, so your max bid here is <b>${money(mb, s)}</b>.</span>`;
+      if (onLot && mb === 0) html += ` <span class="reserve">You can't bid on this one: ${(t.count || 0) >= lim.max ? "your squad is full" : ((t.cat && t.cat[live.cat]) || 0) >= catMax(catList(s).find(c => c.id === live.cat) || { max: 0 }) ? "you have the most allowed in this category" : "you need the money for your remaining minimums"}.</span>`;
+      $("needsLine").innerHTML = html;
     }
 
     async function photoFor(pid) {
@@ -737,7 +749,7 @@
       if (!isOnline) return { ok: false, why: "Reconnecting…", amount };
       if (live.state === "paused") return { ok: false, why: "Paused by the host", amount };
       if (live.state !== "bidding") return { ok: false, why: "", amount };
-      if (endsAt(live) - serverNow() <= 0) return { ok: false, why: "Time's up", amount };
+      if (endsAt(live) - serverNow() <= 0) return { ok: false, why: "Time's up · waiting for the auctioneer", amount };
       if (live.team === myTeam) return { ok: false, leading: true, why: "You're the highest bidder", amount };
       const cat = catList(s).find(c => c.id === live.cat);
       if ((t.count || 0) >= squadLimits(s).max) return { ok: false, why: "Your squad is full", amount };
@@ -757,14 +769,15 @@
       const secs = Math.ceil(left / 1000);
       bar.classList.toggle("low", live.state === "bidding" && secs <= 5);
       $("pLeft").textContent = live.state === "paused" ? "Paused" : live.state === "bidding" ? `${secs}s left` : "";
-      const going = live.state === "paused" ? "paused" : live.state === "bidding" && live.team ? (secs <= 2 && secs > 0 ? "twice" : secs <= 4 && secs > 2 ? "once" : "") : "";
+      const going = live.state === "paused" ? "paused" : live.state === "bidding" && left <= 0 ? "timeup" : live.state === "bidding" && live.team ? (secs <= 2 && secs > 0 ? "twice" : secs <= 4 && secs > 2 ? "once" : "") : "";
       if (going !== lastGoing) {
         lastGoing = going;
         $("plot").querySelector(".going")?.remove();
         if (going) {
           const g = document.createElement("div");
           g.className = `going ${going}`;
-          g.textContent = going === "paused" ? "⏸ Paused by host" : going === "once" ? "Going once…" : "Going twice…";
+          g.textContent = going === "paused" ? "⏸ Paused by host" : going === "timeup" ? "⏰ Time's up" : going === "once" ? "Going once…" : "Going twice…";
+          if (going === "timeup") g.classList.add("timeup");
           $("plot").appendChild(g);
           if (going !== "paused" && myTeam && live.team !== myTeam) { try { navigator.vibrate && navigator.vibrate(60); } catch (e) {} }
         }
@@ -777,13 +790,12 @@
       btn.innerHTML = st.leading ? "You're leading ✓" : st.amount ? `Bid ${money(st.amount, s)}<small>${live.state === "paused" ? "Paused by the host" : live.team ? `+${money(stepFor(live.cat, s), s)} · tap once` : "Opening bid · tap once"}</small>` : "Bid";
       $("pStatus").textContent = st.ok ? "" : st.why || "";
       $("pStatus").className = `status-line ${st.leading ? "good" : st.why ? "bad" : ""}`;
-      document.querySelectorAll("[data-jump]").forEach(b => {
-        const j = bidState(Number(b.dataset.jump));
-        b.disabled = !j.ok;
-        b.textContent = j.amount ? `${money(j.amount, s)}` : `+${b.dataset.jump} steps`;
-      });
     }
     setInterval(() => { if (A && A.status === "live") tick(); }, 200);
+    // any tap turns sound on (phones block it until the person touches the page)
+    document.addEventListener("pointerdown", () => { unlockAudio(); setTimeout(() => { if ($("soundBtn") && audioReady()) $("soundBtn").hidden = true; }, 120); });
+    // break countdown from the host
+    setInterval(() => showBreak(code && A ? A : null), 500);
 
     let placing = false;
     async function placeBid(jump) {
@@ -948,8 +960,17 @@
           return `<div class="squad" style="--c:${safe(t.color)}">
             <div class="squad-head">${crest(id, "lg")}<div><h3>${safe(t.name)}${id === myTeam ? " (you)" : ""}</h3><span class="muted">${mine.length} player${mine.length === 1 ? "" : "s"} · spent ${money(t.spent || 0, s)}</span></div></div>
             <ul>${mine.map(([, p]) => `<li><span>${safe(p.name)}<span class="cat">${safe((catList(s).find(c => c.id === p.cat) || { name: "" }).name)}</span></span><span>${money(p.price, s)}</span></li>`).join("") || `<li><span class="muted">No players</span><span></span></li>`}</ul>
+            <div class="squad-actions"><button class="btn ${id === myTeam ? "btn-sun" : "btn-light"} btn-sm" data-card="${id}">📤 Share squad card</button><button class="btn btn-light btn-sm" data-sqcsv="${id}">⬇ Spreadsheet</button></div>
           </div>`;
         }).join("")}</div>`;
+      view.querySelector(".results-grid").onclick = async e => {
+        const cb = e.target.closest("[data-card]"), cv = e.target.closest("[data-sqcsv]");
+        const id = cb ? cb.dataset.card : cv ? cv.dataset.sqcsv : null;
+        if (!id) return;
+        const name = `${A.teams[id].name} squad`.replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-");
+        if (cb) { cb.disabled = true; try { await shareOrDownload(await squadCardBlob(A, id), `${name}.png`, `${A.teams[id].name} · ${A.title || "Auction"}`); } finally { cb.disabled = false; } }
+        else downloadCSV(squadCSV(A, id), name);
+      };
       animate(view);
       lastKey = "";
     }

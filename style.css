@@ -940,3 +940,8 @@ body.has-bidbar .toast { bottom: 190px; }
 .import-table { width: 100%; border-collapse: collapse; font-size: 14px; text-align: left; }
 .import-table th { position: sticky; top: 0; background: #fff; padding: 6px 8px; color: var(--dim); font-size: 12px; white-space: nowrap; }
 .import-table td { padding: 6px 8px; border-top: 1px solid var(--line); }
+
+/* join form: switch between watching and bidding */
+.switch-mode { margin: 14px 0 0; text-align: center; color: var(--dim); font-weight: 600; }
+.switch-mode .link-btn { font-weight: 800; }
+.input.big.name-in { text-transform: none; letter-spacing: normal; font-family: var(--body); font-size: 22px; font-weight: 700; }

@@ -17,9 +17,9 @@
 
     <!-- Sign in -->
     <section id="gate" class="card narrow" hidden>
-      <p class="eyebrow" style="margin:0">Host an auction</p>
-      <h1 class="title" style="margin-top:6px">Sign in to start</h1>
-      <p class="lead">Your auctions are saved to your Google account. Teams and viewers never need an account.</p>
+      <p class="eyebrow" style="margin:0" id="gateEyebrow">Host an auction</p>
+      <h1 class="title" style="margin-top:6px" id="gateTitle">Sign in to start</h1>
+      <p class="lead" id="gateLead">Your auctions are saved to your Google account. Teams and viewers never need an account.</p>
       <button id="signInBtn" class="btn btn-sun btn-block btn-lg" style="margin-top:18px">Sign in with Google</button>
       <p id="gateErr" class="err"></p>
       <a class="mine-link" href="index.html" style="margin-top:14px">Join an auction instead ›</a>
@@ -37,6 +37,9 @@
       </header>
       <div class="card"><ul id="auctionList" class="list"></ul></div>
     </section>
+
+    <!-- Accepting a collaborator invite -->
+    <section id="inviteView" class="card narrow" hidden></section>
 
     <!-- My profile -->
     <section id="profileView" hidden>
@@ -96,7 +99,8 @@
     let tab = "basics";
     let biddersMount = null;    // live list of bidders on the Share tab
 
-    const views = ["gate", "listView", "editView", "profileView"];
+    const views = ["gate", "listView", "editView", "profileView", "inviteView"];
+    let role = "owner";        // "owner" or "editor" (collaborator) for the open auction
     const show = id => views.forEach(v => { $(v).hidden = v !== id; if (v === id) animate($(v)); });
     const locked = () => A && A.status !== "setup";    // once live, money rules can't change
 
@@ -113,7 +117,13 @@
     // ============================================================
     async function start() {
       user = await currentUser();
+      const q0 = new URLSearchParams(location.search);
       if (!isHostAccount(user)) {
+        if (q0.get("invite")) {
+          $("gateEyebrow").textContent = "You're invited";
+          $("gateTitle").textContent = "Help run an auction";
+          $("gateLead").textContent = "Someone invited you as a collaborator. Sign in with Google to accept: you'll be able to edit the auction and run the auction room.";
+        }
         show("gate");
         $("signInBtn").onclick = async () => {
           try { user = await signInHost(); start(); }
@@ -132,7 +142,8 @@
       $("profBtn").onclick = showProfile;
       $("listBtn").onclick = showList;
       const q = new URLSearchParams(location.search);
-      if (q.get("view") === "profile") showProfile();
+      if (q.get("invite")) showInvite(q.get("invite").toUpperCase(), q.get("k") || "");
+      else if (q.get("view") === "profile") showProfile();
       else if (q.get("a")) openAuction(q.get("a")); else showList();
     }
 
@@ -148,18 +159,29 @@
       const list = $("auctionList");
       list.innerHTML = `<li class="empty">Loading…</li>`;
       const mine = (await get(ref(db, `auctionsByOwner/${user.uid}`))).val() || {};
+      // shared auctions: their name and status can be changed by others, so read the latest
+      await Promise.all(Object.entries(mine).filter(([, m]) => m.role === "editor").map(async ([c, m]) => {
+        try {
+          const [t, st] = await Promise.all([get(ref(db, `auctions/${c}/title`)), get(ref(db, `auctions/${c}/status`))]);
+          if (t.exists()) m.title = t.val(); else m.gone = true;
+          if (st.exists()) m.status = st.val();
+        } catch (e) {}
+      }));
       const rows = Object.entries(mine).sort((a, b) => (b[1].createdAt || 0) - (a[1].createdAt || 0));
-      list.innerHTML = rows.length ? rows.map(([c, m]) => `
+      list.innerHTML = rows.length ? rows.map(([c, m]) => m.gone ? `
+        <li class="list-item"><span class="list-ico">🗑️</span><div class="grow"><p class="list-title">${safe(m.title || "Auction")}</p><p>The owner deleted this auction.</p></div>
+          <button class="btn btn-light" data-leave="${c}">Remove from my list</button></li>` : `
         <li class="list-item">
           <span class="list-ico" title="${safe(sportName(m.sport))}">${sportIcon(m.sport)}</span>
           <div class="grow">
-            <p class="list-title">${safe(m.title || "Untitled auction")} <span class="pill ${m.status || "setup"}">${m.status === "live" ? "Live" : m.status === "ended" ? "Finished" : "Setup"}</span></p>
+            <p class="list-title">${safe(m.title || "Untitled auction")} <span class="pill ${m.status || "setup"}">${m.status === "live" ? "Live" : m.status === "ended" ? "Finished" : "Setup"}</span>${m.role === "editor" ? ` <span class="pill shared">Shared with you</span>` : ""}</p>
             <p>${safe(m.sport ? sportName(m.sport) : "Sport not set")} · code <b>${c}</b>${m.createdAt ? ` · created ${new Date(m.createdAt).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })}` : ""}</p>
           </div>
           <a class="btn btn-sun" href="room.html?a=${c}">${m.status === "ended" ? "Results" : "Room ▶"}</a>
           <button class="btn btn-light" data-edit="${c}">Set up</button>
           <button class="btn btn-light" data-dup="${c}" title="Make a copy to reuse teams, players and rules">⧉ Duplicate</button>
-          <button class="icon-btn" data-del="${c}" title="Delete" aria-label="Delete auction">✕</button>
+          ${m.role === "editor" ? `<button class="icon-btn" data-leave="${c}" title="Leave this shared auction" aria-label="Leave shared auction">⎋</button>`
+            : `<button class="icon-btn" data-del="${c}" title="Delete" aria-label="Delete auction">✕</button>`}
         </li>`).join("") : `<li class="empty">No auctions yet. Press <b>+ New auction</b> to set one up.</li>`;
     }
 
@@ -194,6 +216,7 @@
           <div><b>${count("ended")}</b><span>Finished</span></div>
           <div><b>${count("setup")}</b><span>In setup</span></div>
         </div>
+        ${mine.some(m => m.role === "editor") ? `<p class="hint">🤝 You collaborate on ${mine.filter(m => m.role === "editor").length} auction${mine.filter(m => m.role === "editor").length === 1 ? "" : "s"} shared with you.</p>` : ""}
         ${sports.length ? `<p class="hint">Sports: ${sports.map(x => `${sportIcon(x)} ${safe(sportName(x))}`).join(" · ")}</p>` : ""}
         <div class="row" style="margin-top:18px">
           <button class="btn btn-sun" id="pfList">My auctions ›</button>
@@ -212,12 +235,20 @@
       const ed = e.target.closest("[data-edit]"), del = e.target.closest("[data-del]"), dup = e.target.closest("[data-dup]");
       if (ed) openAuction(ed.dataset.edit);
       if (dup) duplicateAuction(dup.dataset.dup);
+      const lv = e.target.closest("[data-leave]");
+      if (lv) {
+        if (!await confirmBox("Leave this shared auction?", "It's removed from your list and you can't edit it any more. The owner can invite you again.", { ok: "Leave", danger: true })) return;
+        const c = lv.dataset.leave;
+        try { await set(ref(db, `auctions/${c}/editors/${user.uid}`), null); } catch (e2) {}
+        await set(ref(db, `auctionsByOwner/${user.uid}/${c}`), null);
+        showList();
+      }
       if (del) {
         if (!await confirmBox("Delete this auction?", "The auction, its players and all results are removed. This can't be undone.", { ok: "Delete auction", danger: true })) return;
         const c = del.dataset.del;
         await update(ref(db), {
           [`auctions/${c}`]: null, [`auctionSecrets/${c}`]: null,
-          [`auctionPhotos/${c}`]: null, [`auctionMembers/${c}`]: null, [`auctionNames/${c}`]: null, [`auctionOnline/${c}`]: null,
+          [`auctionPhotos/${c}`]: null, [`auctionMembers/${c}`]: null, [`auctionNames/${c}`]: null, [`auctionOnline/${c}`]: null, [`auctionJoin/${c}`]: null,
           [`auctionsByOwner/${user.uid}/${c}`]: null
         });
         showList();
@@ -345,9 +376,16 @@
     // Set up one auction
     // ============================================================
     async function openAuction(c) {
-      const [snap, sec2] = await Promise.all([get(ref(db, `auctions/${c}`)), get(ref(db, `auctionSecrets/${c}`))]);
-      const data = snap.val();
-      if (!data || data.owner !== user.uid) { await alertBox("Auction not found", "That auction isn't in your account.", "🔍"); showList(); return; }
+      const data = (await get(ref(db, `auctions/${c}`))).val();
+      role = !data ? null : data.owner === user.uid ? "owner" : (data.editors || {})[user.uid] ? "editor" : null;
+      if (!role) {
+        const listed = (await get(ref(db, `auctionsByOwner/${user.uid}/${c}`))).exists();
+        if (listed && data) await set(ref(db, `auctionsByOwner/${user.uid}/${c}`), null);
+        await alertBox(data ? "No access" : "Auction not found", data ? "You're not a collaborator on this auction any more. Ask its owner for a new invite." : "That auction isn't in your account.", "🔍");
+        showList(); return;
+      }
+      const sec2 = await get(ref(db, `auctionSecrets/${c}`));
+      if (role === "owner" && data.ownerName !== (user.displayName || user.email)) set(ref(db, `auctions/${c}/ownerName`), user.displayName || user.email || "Host").catch(() => {});
       code = c;
       A = data;
       A.settings = Object.assign(JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), A.settings || {});
@@ -363,7 +401,7 @@
       $("roomBtn").href = `room.html?a=${c}`;
       const st = A.status || "setup";
       $("statusPill").className = `pill ${st}`;
-      $("statusPill").textContent = st === "live" ? "Live" : st === "ended" ? "Finished" : "Setup";
+      $("statusPill").textContent = (st === "live" ? "Live" : st === "ended" ? "Finished" : "Setup") + (role === "editor" ? " · Collaborator" : "");
       $("roomBtn").textContent = st === "ended" ? "See results ▶" : "Open auction room ▶";
       show("editView");
       showTab("basics");
@@ -1193,6 +1231,8 @@
                 <p class="share-state ${shared[id] ? "ok" : ""}">${shared[id] ? "✓ Shared" : `Not shared yet · <button class="link-btn" data-mark="${id}">Mark as shared</button>`}</p>
               </div>`;
           }).join("")}</div>`);
+      $("pane-share").insertAdjacentHTML("beforeend", collabSecHTML());
+      fillCollaborators();
       $("pane-share").insertAdjacentHTML("beforeend", sec("green", "👥", "Who can bid", "Approve each person who asks to bid for a team. Viewers only watch and never need approval.", `<div id="bidderBox"></div>`));
       biddersMount = mountBidders($("bidderBox"), code, () => A.teams, (id, size) => crestHTML(A.teams[id], logoOf(logos, id), size));
       if (window.QRCode) {
@@ -1200,6 +1240,93 @@
         teams.forEach(([id]) => new QRCode($(`qr-${id}`), { text: `${base}?a=${code}&t=${id}&k=${pins[id] || ""}`, width: 140, height: 140, colorDark: "#13262A", colorLight: "#ffffff" }));
       }
     }
+    // ---------- collaborators: people who can edit this auction and run the room ----------
+    const inviteLink = token => `${new URL("host.html", location.href).href}?invite=${code}&k=${token}`;
+    function collabSecHTML() {
+      return sec("amber", "🤝", "Collaborators",
+        role === "owner" ? "Share this auction with people who help you organise. They sign in with Google, then can edit setup and run the auction room. Only you can delete the auction or invite people."
+                         : "People who can edit this auction. Only the owner can invite or remove collaborators.",
+        `<div id="collabList" class="collab-list"><p class="muted">Loading…</p></div>
+         ${role === "owner" ? `<div class="row" style="margin-top:12px">
+           <button class="btn btn-sun" id="inviteCopy">🔗 Copy invite link</button>
+           <button class="btn btn-light btn-sm" id="inviteNew" title="Old invite links stop working">Make a new link</button>
+         </div>
+         <p class="hint">Send the link only to people you trust: anyone who opens it and signs in can edit. Making a new link stops the old one; people who already joined stay until you remove them.</p>` : ""}`);
+    }
+    async function fillCollaborators() {
+      const box = $("collabList");
+      if (!box) return;
+      const eds = Object.entries(A.editors || {});
+      box.innerHTML = `
+        <div class="collab"><span class="collab-av">${safe(initials(A.ownerName || "Owner"))}</span><div class="grow"><b>${safe(A.ownerName || "Owner")}</b><small>Owner${role === "owner" ? " (you)" : ""}</small></div></div>
+        ${eds.map(([uid, e]) => `<div class="collab">
+          ${e.photo ? `<img class="collab-av" src="${safe(e.photo)}" alt="" referrerpolicy="no-referrer">` : `<span class="collab-av">${safe(initials(e.name))}</span>`}
+          <div class="grow"><b>${safe(e.name)}${uid === user.uid ? " (you)" : ""}</b><small>${safe(e.email || "")} · collaborator${e.at ? ` since ${new Date(e.at).toLocaleDateString([], { day: "numeric", month: "short" })}` : ""}</small></div>
+          ${role === "owner" ? `<button class="btn btn-danger btn-sm" data-uncollab="${uid}">Remove</button>` : ""}
+        </div>`).join("") || `<p class="muted" style="margin:8px 0 0">No collaborators yet.</p>`}`;
+    }
+    async function inviteToken(fresh = false) {
+      const r = ref(db, `auctionSecrets/${code}/inviteToken`);
+      let t = fresh ? "" : (await get(r)).val();
+      if (!t) { t = makeCode(10) + makeCode(10); await set(r, t); }
+      return t;
+    }
+    $("pane-share").addEventListener("click", async e => {
+      if (e.target.closest("#inviteCopy")) { if (await copyText(inviteLink(await inviteToken()))) toast("Invite link copied"); }
+      if (e.target.closest("#inviteNew")) {
+        if (!await confirmBox("Make a new invite link?", "The old link stops working. Collaborators who already joined keep their access.", { ok: "Make new link" })) return;
+        const t = await inviteToken(true);
+        if (await copyText(inviteLink(t))) toast("New invite link copied");
+      }
+      const un = e.target.closest("[data-uncollab]");
+      if (un) {
+        const uid = un.dataset.uncollab, ed = (A.editors || {})[uid] || {};
+        if (!await confirmBox(`Remove ${ed.name || "this collaborator"}?`, "They can't edit or run this auction any more.", { ok: "Remove", danger: true })) return;
+        await update(ref(db), { [`auctions/${code}/editors/${uid}`]: null, [`auctionJoin/${code}/${uid}`]: null });
+        delete A.editors[uid];
+        fillCollaborators();
+      }
+    });
+
+    // ---------- accepting an invite ----------
+    async function showInvite(c, token) {
+      show("inviteView");
+      const box = $("inviteView");
+      box.innerHTML = `<p class="muted">Checking the invite…</p>`;
+      const data = (await get(ref(db, `auctions/${c}`))).val();
+      if (!data) { box.innerHTML = `<h1 class="title">Invite not found</h1><p class="lead">This auction doesn't exist any more.</p><button class="btn btn-sun" id="ivList">My auctions</button>`; $("ivList").onclick = showList; return; }
+      if (data.owner === user.uid || (data.editors || {})[user.uid]) { openAuction(c); return; }
+      box.innerHTML = `
+        <p class="eyebrow" style="margin:0">You're invited</p>
+        <h1 class="title" style="margin-top:6px">${sportIcon(data.settings && data.settings.sport)} ${safe(data.title || "Auction")}</h1>
+        <p class="lead">${safe(data.ownerName || "The organiser")} invited you to help run this auction.</p>
+        <ul class="checks" style="flex-direction:column;gap:8px">
+          <li>Edit teams, players, categories and photos</li><li>Approve bidders and run the auction room</li><li>You can't delete the auction or invite others</li>
+        </ul>
+        <p class="hint">Joining as <b>${safe(user.displayName || user.email)}</b> (${safe(user.email || "")}).</p>
+        <div class="row" style="margin-top:16px">
+          <button class="btn btn-sun btn-lg" id="ivAccept">Accept and open</button>
+          <button class="btn btn-light" id="ivNo">Not now</button>
+        </div>
+        <p class="err" id="ivErr"></p>`;
+      $("ivNo").onclick = showList;
+      $("ivAccept").onclick = async () => {
+        $("ivAccept").disabled = true;
+        try {
+          await update(ref(db), {
+            [`auctionJoin/${c}/${user.uid}`]: token,
+            [`auctions/${c}/editors/${user.uid}`]: { name: user.displayName || user.email || "Collaborator", email: user.email || "", photo: user.photoURL || "", at: serverTimestamp() },
+            [`auctionsByOwner/${user.uid}/${c}`]: { title: data.title || "Auction", sport: (data.settings && data.settings.sport) || "", status: data.status || "setup", createdAt: serverTimestamp(), role: "editor" }
+          });
+          toast("You're a collaborator now");
+          openAuction(c);
+        } catch (e) {
+          $("ivErr").textContent = "This invite link has expired or was replaced. Ask the owner for a new one.";
+          $("ivAccept").disabled = false;
+        }
+      };
+    }
+
     async function markShared(id) {
       shared[id] = true;
       await set(ref(db, `auctionSecrets/${code}/shared/${id}`), true);

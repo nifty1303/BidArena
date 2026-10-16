@@ -879,3 +879,11 @@ body.has-bidbar .toast { bottom: 190px; }
 .bidder { flex-wrap: wrap; }
 .bidder .grow { flex: 1 1 150px; min-width: 130px; }
 .bidder .btn { flex: 0 0 auto; }
+
+/* ---------- collaborators ---------- */
+.collab-list { display: grid; gap: 8px; }
+.collab { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; background: #fff; border: 1px solid var(--line); }
+.collab b { display: block; }
+.collab small { color: var(--dim); }
+.collab-av { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; display: grid; place-items: center; background: var(--accent); color: #fff; font-weight: 800; flex: 0 0 auto; }
+.pill.shared { background: #E8F0FF; color: #1D4FB8; border-color: #BFD3FF; }

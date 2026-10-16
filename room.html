@@ -112,7 +112,7 @@
       onValue(aRef(), async snap => {
         A = snap.val();
         if (!A) { message(`<h2 class="title">Auction not found</h2><p class="lead">It may have been deleted.</p>`); return; }
-        if (A.owner !== user.uid) { message(`<h2 class="title">Not your auction</h2><p class="lead">Only its host can run this room. To watch, open the viewer page with the code <b>${code}</b>.</p>`); return; }
+        if (A.owner !== user.uid && !(A.editors || {})[user.uid]) { message(`<h2 class="title">Not your auction</h2><p class="lead">Only its host and collaborators can run this room. To watch, open the viewer page with the code <b>${code}</b>.</p>`); return; }
         if (A.members) set(aRef("members"), null);     // old public member list held team PINs; members now live in auctionMembers
         render();
         refreshBanners();

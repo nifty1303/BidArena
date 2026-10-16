@@ -1044,7 +1044,7 @@
       const name = $("aName").value.trim();
       if (!name) { $("aName").focus(); return; }
       const S = sch();
-      const p = { name, age: cleanAge($("aAge").value), cat: $("aCat").value || (catList(A.settings)[0] || {}).id, order: nextOrder(), status: "pending" };
+      const p = { name, age: cleanAge($("aAge").value), cat: $("aCat").value || (catList(A.settings)[0] || {}).id, order: nextOrder(), status: "pending", batch: "manual" };
       if (S) {
         p.role = $("aRole").value; p.sub = $("aSub").value;
         S.extra.forEach(x => { p[x.key] = $(`a_${x.key}`).value; });
@@ -1091,33 +1091,41 @@
     }
 
     // ---------- files already imported: see their players, download them, or remove them ----------
-    const batchPlayers = b => playerList().filter(([, p]) => p.batch === b);
+    // "__old" = players from before files were tracked; "manual" = added one by one
+    const batchPlayers = b => playerList().filter(([, p]) => (b === "__old" ? !p.batch : p.batch === b));
+    function groupInfo(b) {
+      if (b === "__old") return { name: "Added before file tracking", pseudo: true, ico: "📂", note: "from files uploaded earlier, or added by hand, before this list existed" };
+      if (b === "manual") return { name: "Added by hand", pseudo: true, ico: "✍️", note: "added one by one with “Add one player”" };
+      const f = (A.imports || {})[b] || {};
+      return { ...f, ico: /\.(xlsx|xls|xlsm|ods)$/i.test(f.name || "") ? "📗" : f.name === "Pasted rows" ? "📋" : "📄" };
+    }
     function importsHTML() {
-      const list = Object.entries(A.imports || {}).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
-      if (!list.length) return "";
+      const files = Object.entries(A.imports || {}).sort((a, b) => (b[1].at || 0) - (a[1].at || 0)).map(([b]) => b);
+      const groups = [...files, ...["manual", "__old"].filter(b => batchPlayers(b).length)];
+      const row = b => {
+        const g = groupInfo(b), ps = batchPlayers(b), sold = ps.filter(([, p]) => p.status === "sold").length;
+        return `<div class="import-row ${g.pseudo ? "pseudo" : ""}">
+          <span class="import-ico" aria-hidden="true">${g.ico}</span>
+          <div class="grow"><b>${safe(g.name || "Imported file")}</b>
+            <small>${g.pseudo ? `${safe(g.note)} · ` : `${g.at ? new Date(g.at).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + " · " : ""}added ${g.count || 0} player${g.count === 1 ? "" : "s"} · `}<b>${ps.length}</b> in the list${sold ? ` (${sold} sold)` : ""}</small></div>
+          <button class="btn btn-light btn-sm" data-iview="${b}">View</button>
+          <button class="btn btn-danger btn-sm" data-iremove="${b}">Remove</button>
+        </div>`;
+      };
       return `<div class="imports">
-        <p class="label" style="margin-top:16px">Imported files <span class="muted" style="font-weight:600">· ${list.length}</span></p>
-        ${list.map(([b, f]) => {
-          const ps = batchPlayers(b), sold = ps.filter(([, p]) => p.status === "sold").length;
-          return `<div class="import-row">
-            <span class="import-ico" aria-hidden="true">${/\.(xlsx|xls|xlsm|ods)$/i.test(f.name) ? "📗" : f.name === "Pasted rows" ? "📋" : "📄"}</span>
-            <div class="grow"><b>${safe(f.name)}</b>
-              <small>${f.at ? new Date(f.at).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + " · " : ""}added ${f.count || 0} player${f.count === 1 ? "" : "s"} · <b>${ps.length}</b> still in the list${sold ? ` (${sold} sold)` : ""}</small></div>
-            <button class="btn btn-light btn-sm" data-iview="${b}">View</button>
-            <button class="btn btn-danger btn-sm" data-iremove="${b}">Remove</button>
-          </div>`;
-        }).join("")}
+        <p class="label" style="margin-top:16px">Uploaded files <span class="muted" style="font-weight:600">· ${files.length} file${files.length === 1 ? "" : "s"}</span></p>
+        ${groups.length ? groups.map(row).join("") : `<p class="hint" style="margin:0">No files uploaded yet. Every Excel/CSV you upload (or rows you paste) shows here, so you can see it and remove its players later.</p>`}
       </div>`;
     }
     function viewImport(b) {
-      const f = (A.imports || {})[b] || {}, ps = batchPlayers(b), s = A.settings;
+      const f = groupInfo(b), ps = batchPlayers(b), s = A.settings;
       const catName = id => (catList(s).find(c => c.id === id) || { name: "–" }).name;
       dialog({
         title: f.name || "Imported file", icon: "📄", wide: true, dismiss: true,
-        html: ps.length ? `<p>${ps.length} player${ps.length === 1 ? "" : "s"} from this file are in the list.</p>
+        html: ps.length ? `<p>${ps.length} player${ps.length === 1 ? "" : "s"} ${f.pseudo ? `${ps.length === 1 ? "is" : "are"} in this group` : `from this file ${ps.length === 1 ? "is" : "are"} in the list`}.</p>
           <div class="table-scroll" style="max-height:50vh"><table class="import-table"><thead><tr><th>Name</th><th>Age</th><th>${safe((sch() || {}).roleLabel || "Info")}</th><th>Special attributes</th><th>Favourite player</th><th>Category</th><th>Status</th></tr></thead>
           <tbody>${ps.map(([, p]) => `<tr><td><b>${safe(p.name)}</b></td><td>${safe(p.age || "")}</td><td>${safe(positionOf(p, s) || p.info || "")}</td><td>${safe(p.attrs || "")}</td><td>${safe(p.fav || "")}</td><td>${safe(catName(p.cat))}</td><td>${p.status === "sold" ? "Sold" : p.status === "unsold" ? "Unsold" : "Waiting"}</td></tr>`).join("")}</tbody></table></div>`
-          : `<p>None of this file's players are in the list any more.</p>`,
+          : `<p>None of ${f.pseudo ? "these" : "this file's"} players are in the list any more.</p>`,
         buttons: [...(ps.length ? [{ label: "Download as CSV", value: "csv", kind: "light" }] : []), { label: "Close", value: true, kind: "sun" }]
       }).then(v => {
         if (v !== "csv") return;
@@ -1127,22 +1135,22 @@
       });
     }
     async function removeImport(b) {
-      const f = (A.imports || {})[b] || {}, ps = batchPlayers(b);
+      const f = groupInfo(b), ps = batchPlayers(b);
       const removable = ps.filter(([, p]) => p.status !== "sold"), sold = ps.length - removable.length;
       const ok = await confirmBox(`Remove “${f.name || "this file"}”?`,
         removable.length
-          ? `${removable.length} player${removable.length === 1 ? "" : "s"} from this file, and their photos, will be removed from the auction.${sold ? ` ${sold} already sold ${sold === 1 ? "stays" : "stay"}.` : ""} Players you added by hand or from other files aren't touched.`
+          ? `${removable.length} player${removable.length === 1 ? "" : "s"} ${f.pseudo ? "in this group" : "from this file"}, and their photos, will be removed from the auction.${sold ? ` ${sold} already sold ${sold === 1 ? "stays" : "stay"}.` : ""} ${f.pseudo ? "Players from uploaded files aren't touched." : "Players you added by hand or from other files aren't touched."}`
           : `None of its players are left to remove${sold ? ` (${sold} are sold and stay)` : ""}. The file is just taken off this list.`,
         { ok: removable.length ? `Remove ${removable.length} player${removable.length === 1 ? "" : "s"}` : "Remove from list", danger: true });
       if (!ok) return;
-      const changes = sold ? {} : { [`auctions/${code}/imports/${b}`]: null };
+      const changes = sold || f.pseudo ? {} : { [`auctions/${code}/imports/${b}`]: null };
       removable.forEach(([id]) => {
         changes[`auctions/${code}/players/${id}`] = null;
         changes[`auctionPhotos/${code}/${id}`] = null;
         delete A.players[id];
       });
       await update(ref(db), changes);
-      if (!sold) delete A.imports[b];
+      if (!sold && !f.pseudo && A.imports) delete A.imports[b];
       renderPlayers(); updateTop();
       toast(removable.length ? `Removed ${removable.length} player${removable.length === 1 ? "" : "s"}` : "Removed from the list");
     }

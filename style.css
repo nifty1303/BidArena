@@ -1012,3 +1012,41 @@ body.has-bidbar .toast { bottom: 190px; }
 .tsq-foot { display: flex; justify-content: space-between; margin-top: 8px; font-size: 14px; color: var(--dim); }
 .tsq-foot b { color: var(--ink); }
 .tsq-cats { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+
+/* ---------- room: time's up waits for the auctioneer ---------- */
+.going.timeup { background: #B45309; color: #fff; box-shadow: 0 10px 30px rgba(180, 83, 9, 0.4); animation: goingIn 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) both, pausedBlink 1.4s ease-in-out 0.5s infinite; }
+.timeup-note { margin: 8px 0 0; padding: 10px 14px; border-radius: 14px; background: #FFF4E5; border: 1px solid #F5C27A; color: #6B3A00; font-weight: 600; }
+#soldBtn.ready { background: var(--hot, #D7263D); color: #fff; animation: soldReady 1s ease-in-out infinite; }
+@keyframes soldReady { 50% { box-shadow: 0 0 0 8px rgba(215, 38, 61, 0.25); transform: scale(1.04); } }
+
+/* ---------- display screen (projector): no controls, no host data ---------- */
+body.display-mode #controls, body.display-mode #quickbid, body.display-mode .kbd, body.display-mode #queueNote, body.display-mode #timeupNote,
+body.display-mode #watchBtn, body.display-mode #qrBtn, body.display-mode #displayBtn, body.display-mode #biddersBtn, body.display-mode #reqBtn,
+body.display-mode #setupLink, body.display-mode #csvBtn, body.display-mode #reopenBtn, body.display-mode .squad-actions, body.display-mode [data-requeue], body.display-mode [data-call] { display: none !important; }
+
+/* ---------- break countdown ---------- */
+.break-overlay { position: fixed; inset: 0; z-index: 85; display: grid; place-items: center; background: rgba(8, 20, 24, 0.72); backdrop-filter: blur(6px); }
+.break-card { display: grid; justify-items: center; gap: 6px; padding: 30px 40px; border-radius: 28px; background: #fff; text-align: center; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45); max-width: calc(100% - 32px); }
+.break-ico { font-size: 54px; line-height: 1; }
+.break-title { margin: 0; font-family: var(--display); font-size: 40px; font-weight: 800; text-transform: uppercase; }
+.break-msg { color: var(--dim); font-weight: 600; }
+.break-clock { font-family: var(--display); font-size: clamp(64px, 14vw, 140px); font-weight: 800; line-height: 1; color: var(--accent); font-variant-numeric: tabular-nums; }
+.break-overlay.compact { inset: auto 0 0 0; background: none; backdrop-filter: none; padding: 12px; }
+.break-overlay.compact .break-card { grid-auto-flow: column; align-items: center; gap: 16px; padding: 12px 20px; }
+.break-overlay.compact .break-ico { font-size: 30px; }
+.break-overlay.compact .break-title { font-size: 22px; text-align: left; }
+.break-overlay.compact .break-text { text-align: left; }
+.break-overlay.compact .break-clock { font-size: 40px; }
+
+/* ---------- phones: needs, sound ---------- */
+.needs-line { margin: 8px 0 0; padding: 10px 12px; border-radius: 14px; background: rgba(255, 255, 255, 0.92); border: 1px solid var(--line); font-size: 14px; line-height: 1.45; }
+.needs-line .reserve { display: block; margin-top: 4px; color: #8A4B00; }
+.sound-banner { display: block; width: 100%; margin: 0 0 10px; padding: 10px 14px; border-radius: 14px; border: 1px dashed var(--accent); background: #fff; color: var(--accent); font: inherit; font-weight: 800; cursor: pointer; }
+
+/* ---------- results: share cards ---------- */
+.squad-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+
+/* ---------- setup: finished auction is read-only ---------- */
+.ended-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 12px; padding: 12px 16px; border-radius: 16px; background: #FFF6D6; border: 1px solid #F1D27A; color: #5A4300; }
+.ended-bar span { flex: 1; min-width: 220px; }
+.locked-pane .drop, .locked-pane .crest-edit, .locked-pane .thumb-add, .locked-pane .banner-add, .locked-pane .photo-pick, .locked-pane .drag-handle, .locked-pane .swatch { pointer-events: none; opacity: 0.55; }

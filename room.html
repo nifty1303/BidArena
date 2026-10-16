@@ -18,6 +18,7 @@
       <span id="livePill" class="pill live" hidden>● Live</span>
       <span id="joinChip" class="join-chip" hidden></span>
       <button id="watchBtn" class="btn btn-dark req-btn" title="Who's watching">👀 <span id="watchCount">0</span><span class="lbl"> watching</span></button>
+      <button id="displayBtn" class="btn btn-dark" title="Open the display screen for the projector (no controls)">🖥<span class="lbl"> Display</span></button>
       <button id="qrBtn" class="btn btn-dark" title="Show the viewer QR code big (Q)" aria-label="Show QR code">▦</button>
       <button id="biddersBtn" class="btn btn-dark req-btn" title="Bidders: approve who can bid">👥<span class="lbl"> Bidders</span><span class="badge" id="bidderCount" hidden></span></button>
       <button id="reqBtn" class="btn btn-dark req-btn" title="Team requests" hidden>📨<span class="lbl"> Team requests</span><span class="badge" id="reqCount"></span></button>
@@ -48,6 +49,8 @@
           <button id="restartBtn" class="btn btn-dark">↺ Restart bidding</button>
           <span class="sep"></span>
           <button id="undoBtn" class="btn btn-dark">Undo last sale</button>
+          <button id="undoUnsoldBtn" class="btn btn-dark" title="Put the player who just went unsold back in the queue">↩ Undo unsold</button>
+          <button id="breakBtn" class="btn btn-dark" title="Show a break countdown on every screen">☕ Break</button>
           <button id="endBtn" class="btn btn-danger">End auction</button>
         </div>
         <div id="quickbid" class="quickbid">
@@ -57,6 +60,7 @@
         <div class="ticker" id="ticker" hidden><span class="ticker-label">🔨 Sold</span><div class="ticker-track" id="tickerTrack"></div></div>
         <p class="kbd">Shortcuts: <b>N</b> next · <b>P</b> or <b>Space</b> pause / resume · <b>T</b> +10s · <b>S</b> sold · <b>U</b> unsold · <b>F</b> full screen · <b>Q</b> big QR code</p>
         <p id="queueNote" class="kbd" style="margin-top:6px"></p>
+        <p id="timeupNote" class="timeup-note" hidden></p>
       </div>
 
       <aside class="board">
@@ -81,13 +85,14 @@
       catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine,
       dialog, alertBox, confirmBox, copyText, teamBudget, purseLeftOf,
       playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
-      mountBidders, watchConnection
+      mountBidders, watchConnection, ensureGuest, showBreak, squadCardBlob, squadCSV, shareOrDownload
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction room");
     const $ = id => document.getElementById(id);
     const code = (new URLSearchParams(location.search).get("a") || "").toUpperCase();
     const aRef = p => ref(db, `auctions/${code}${p ? "/" + p : ""}`);
+    const DISPLAY = new URLSearchParams(location.search).get("view") === "display";
 
     let user = null, A = null;
     let closing = false;
@@ -119,6 +124,20 @@
     // ============================================================
     async function start() {
       if (!code) { message(`<h2 class="title">No auction chosen</h2><p class="lead">Open an auction from <a href="host.html">My auctions</a>.</p>`); return; }
+      if (DISPLAY) {
+        // The projector view: no controls and no host data, so any computer can show it
+        document.body.classList.add("display-mode");
+        document.title = "Display · BidArena";
+        user = (await currentUser()) || (await ensureGuest());
+        onValue(aRef(), async snap => {
+          A = snap.val();
+          if (!A) { message(`<h2 class="title">Auction not found</h2>`); return; }
+          render();
+          refreshBanners();
+          if (await loadTeamLogos(code, A.teams, logos)) { lastKey = ""; render(); }
+        });
+        return;
+      }
       user = await currentUser();
       if (!isHostAccount(user)) {
         message(`<h2 class="title">Sign in to run the room</h2><p class="lead">Only the host who set up this auction can run it.</p>
@@ -127,6 +146,7 @@
         return;
       }
       $("setupLink").href = `host.html?a=${code}`;
+      $("displayBtn").onclick = () => window.open(`room.html?a=${code}&view=display`, `bidarena-display-${code}`);
       watchBidderRequests();
       watchAudience();
       onValue(aRef(), async snap => {
@@ -303,8 +323,16 @@
     function problems() { return setupProblems(S(), A.teams, A.players); }
 
     function renderStartScreen() {
-      const issues = problems();
       const s = S(), cats = catList(s);
+      if (DISPLAY) {
+        message(`<h2 class="title">${safe(A.title || "Auction")}</h2>
+          <p class="lead">The auction starts soon</p>
+          <div class="parade" style="margin:16px 0">${teams().map(([id, t]) => `<div class="pt">${crest(id, "xl")}${safe(t.name)}</div>`).join("")}</div>
+          <div class="qr-start"><div class="qr" id="qrStart"></div><div><b>Scan to watch live</b><p class="muted" style="margin:4px 0 0">${safe(shortUrl())} · code <b>${code}</b></p></div></div>`);
+        drawQR($("qrStart"), 180);
+        return;
+      }
+      const issues = problems();
       message(`
         <h2 class="title">Ready to <span>start?</span></h2>
         <div class="parade" style="justify-content:flex-start;margin:14px 0 4px">${teams().map(([id, t]) => `<div class="pt">${crest(id, "lg")}${safe(t.name)}</div>`).join("")}</div>
@@ -441,7 +469,7 @@
         if (changed || true) {
           const sold = players().filter(([, p]) => p.status === "sold").length;
           const unsold = players().filter(([, p]) => p.status === "unsold").length;
-          const q = plannedNext(live.pid || "");
+          const q = DISPLAY ? sharedNext() : plannedNext(live.pid || "");
           const first = !Object.keys(A.sales || {}).length && !players().some(([, p]) => p.status === "unsold");
           const html = bannerHTML(bannerSrcs, "stage-banner") + (first && q ? `
             <div class="idle">
@@ -560,13 +588,22 @@
       const frac = Math.max(0, Math.min(1, left / live.timerMs));
       $("ringProg").style.strokeDashoffset = String(326.7 * (1 - frac));
       const secs = Math.ceil(left / 1000);
+      const timeUp = live.state === "bidding" && left <= 0;
       $("ringNum").textContent = live.state === "sold" ? "🔨" : live.state === "unsold" ? "–" : secs;
-      $("ringNote").textContent = live.state === "paused" ? "Paused" : live.state === "bidding" ? "seconds left" : "";
+      $("ringNote").textContent = live.state === "paused" ? "Paused" : timeUp ? "Time's up" : live.state === "bidding" ? "seconds left" : "";
       ring.classList.toggle("low", live.state === "bidding" && secs <= 5);
       if (live.state === "bidding" && secs <= 5 && secs > 0 && secs !== lastTick) { lastTick = secs; sounds.tick(); }
-      showGoing(live.state === "paused" ? "paused" : live.state === "bidding" && live.team ? (secs <= 2 && secs > 0 ? "twice" : secs <= 4 && secs > 2 ? "once" : "") : "");
-      // Time's up: the host's screen closes the sale
-      if (live.state === "bidding" && left <= 0 && !closing && hostOnline) finalize(false);
+      showGoing(live.state === "paused" ? "paused" : timeUp ? (live.team ? "timeup" : "timeupnone") : live.state === "bidding" && live.team ? (secs <= 2 && secs > 0 ? "twice" : secs <= 4 && secs > 2 ? "once" : "") : "");
+      // Time's up never sells by itself: bidding is closed and the auctioneer presses SOLD (or reopens it)
+      if (!DISPLAY) {
+        $("soldBtn").classList.toggle("ready", timeUp && !!live.team);
+        $("pauseBtn").disabled = !["bidding", "paused"].includes(live.state) || timeUp;
+        $("addTimeBtn").textContent = timeUp ? "↺ Reopen +10s" : "+10s";
+        $("timeupNote").hidden = !timeUp;
+        if (timeUp) $("timeupNote").innerHTML = live.team
+          ? `⏰ Time's up. Bidding is closed. Press <b>🔨 Sold now</b> (S) to sell to ${safe((A.teams[live.team] || {}).name || "the leader")}, or <b>Reopen +10s</b> (T) to take more bids.`
+          : `⏰ Time's up with no bids. Press <b>Unsold</b> (U), or <b>Reopen +10s</b> (T) to wait for a bid.`;
+      }
     }
     setInterval(() => { if (A && A.status === "live") tick(); }, 200);
 
@@ -578,9 +615,10 @@
       if (!which) return;
       const b = document.createElement("div");
       b.className = `going ${which}`;
-      b.textContent = which === "paused" ? "⏸ Paused" : which === "once" ? "Going once…" : "Going twice…";
+      b.textContent = which === "paused" ? "⏸ Paused" : which === "timeup" ? "⏰ Time's up · waiting for the hammer" : which === "timeupnone" ? "⏰ Time's up · no bids" : which === "once" ? "Going once…" : "Going twice…";
+      if (which.startsWith("timeup")) b.classList.add("timeup");
       $("stage").appendChild(b);
-      if (which !== "paused") sounds.going();
+      if (which === "once" || which === "twice") sounds.going();
     }
 
     // ---------- teams board ----------
@@ -622,6 +660,7 @@
         return `<div class="pool-row">
           <div class="grow"><b>${safe(p.name)}</b><div class="tmeta">${safe(c.name)} · ${c.unsold === "wishlist" ? "wishlist" : c.unsold === "afterCategory" ? "after category" : "after all"}${(p.rounds || 0) > 1 ? " · unsold twice" : ""}</div></div>
           ${wish(id) ? `<span class="wish" title="Teams that wishlisted this player">♥ ${wish(id)}</span>` : ""}
+          <button class="btn btn-light btn-sm" data-requeue="${id}" title="Back into the normal queue">↩</button>
           <button class="btn btn-dark btn-sm" data-call="${id}" ${busy ? "disabled" : ""}>Call</button>
         </div>`;
       }).join("") : `<p class="muted" style="font-size:14px;margin:0">No unsold players yet.</p>`;
@@ -637,7 +676,11 @@
       $("pickBtn").disabled = onLot || live.state === "closing" || !pending().length;
       $("queueNote").textContent = q ? `Next: ${q.label} · ${q.left} to go${nextFrom ? "" : " · pick a category in “Next from” to draw from it"}` : "Queue empty: call from the unsold pool or end the auction.";
       // white "Next up" line under the stage: the player after the one on screen
-      const nx = ["sold", "unsold"].includes(live.state) ? plannedNext(live.pid) : q;
+      let nx = DISPLAY ? sharedNext() : ["sold", "unsold"].includes(live.state) ? plannedNext(live.pid) : q;
+      if (!DISPLAY) {
+        const want = nx && A.players[nx.pid] ? { pid: nx.pid, label: nx.label } : null;
+        if (JSON.stringify(A.nextUp || null) !== JSON.stringify(want)) set(aRef("nextUp"), want).catch(() => {});
+      }
       const np = nx && A.players[nx.pid];
       $("nextUp").hidden = !np;
       if (np) $("nextUp").innerHTML = `<span class="nu-label">Next up</span><b>${safe(np.name)}</b><span class="nu-cat">${safe(nx.label)}${positionOf(np, s) ? ` · ${safe(positionOf(np, s))}` : ""}</span>`;
@@ -649,6 +692,9 @@
       $("unsoldBtn").disabled = !onLot;
       $("restartBtn").disabled = !live.pid || live.state === "closing" || (A.players[live.pid] || {}).status === "sold";
       $("undoBtn").disabled = !Object.keys(A.sales || {}).length || onLot;
+      $("undoUnsoldBtn").disabled = !(live.state === "unsold" && live.pid && (A.players[live.pid] || {}).status === "unsold");
+      $("breakBtn").disabled = onLot || live.state === "closing";
+      $("breakBtn").textContent = A.breakUntil ? "☕ End break" : "☕ Break";
       const next = live.state === "bidding" ? nextBid(live, s) : 0;
       $("qbRow").innerHTML = teams().map(([id, t]) => {
         const can = live.state === "bidding" && live.team !== id && ((t.maxBid && t.maxBid[live.cat]) || 0) >= next;
@@ -695,6 +741,7 @@
       closing = false;
       const timerMs = (s.timerSec || 20) * 1000;
       await update(ref(db), {
+        [`auctions/${code}/breakUntil`]: null, [`auctions/${code}/breakMsg`]: null,
         [`auctions/${code}/bids/${pid}`]: null,
         [`auctions/${code}/live`]: {
           pid, cat: p.cat, round: (p.rounds || 0) + 1, state: "bidding", base: cat.base, amount: cat.base, team: "", seq: 0,
@@ -713,6 +760,7 @@
     let nextFrom = "", nextDraw = null;
     try { nextFrom = localStorage.getItem(`nextFrom_${code}`) || ""; } catch (e) {}
     const pendingIn = cid => pending().filter(([, p]) => p.cat === cid);
+    const sharedNext = () => (A.nextUp && A.players[A.nextUp.pid] && (A.players[A.nextUp.pid].status || "pending") !== "sold" ? A.nextUp : null);
     function plannedNext(skip = "") {
       if (nextFrom) {
         const cat = catList(S()).find(c => c.id === nextFrom);
@@ -816,6 +864,7 @@
 
     async function togglePause() {
       const live = L();
+      if (live.state === "bidding" && endsAt(live) - serverNow() <= 0) return;      // time's up: use Reopen +10s instead
       if (live.state === "bidding") await update(aRef("live"), { state: "paused", pausedLeft: Math.max(0, endsAt(live) - serverNow()) });
       else if (live.state === "paused") await update(aRef("live"), { state: "bidding", clockFrom: serverNow() - live.timerMs + Math.max(3000, live.pausedLeft || 0), pausedLeft: null });
     }
@@ -827,6 +876,34 @@
       else if (live.state === "paused") await update(aRef("live"), { pausedLeft: (live.pausedLeft || 0) + 10000 });
       else return;
       toast("+10 seconds");
+    }
+
+    // Put the player who just went unsold back in the queue (as if they never came up this round)
+    async function undoUnsold(pid = L().pid) {
+      const p = A.players[pid];
+      if (!p || p.status !== "unsold") return;
+      if (!await confirmBox("Undo unsold?", `${p.name} goes back into the queue as if this round never happened.`, { ok: "Undo unsold", icon: "↩️" })) return;
+      const changes = {
+        [`auctions/${code}/players/${pid}/status`]: "pending",
+        [`auctions/${code}/players/${pid}/rounds`]: Math.max(0, (p.rounds || 1) - 1)
+      };
+      if (L().pid === pid) changes[`auctions/${code}/live`] = { state: "idle" };
+      await update(ref(db), changes);
+      toast(`${p.name} is back in the queue`);
+    }
+
+    // A short break: a countdown on every screen; Next player ends it
+    async function toggleBreak() {
+      if (A.breakUntil) { await update(aRef(), { breakUntil: null, breakMsg: null }); return; }
+      const mins = await dialog({
+        title: "Take a short break", icon: "☕", dismiss: null,
+        html: `<p>Every screen shows a countdown. Phones stay connected, and pressing <b>Next player</b> ends the break.</p>
+          <label class="label" for="brMsg">Message (optional)</label><input id="brMsg" class="input" maxlength="80" placeholder="e.g. Tea break, back soon">`,
+        buttons: [{ label: "Cancel", value: null, kind: "light" }, { label: "5 min", value: 5, kind: "light" }, { label: "10 min", value: 10, kind: "light" }, { label: "15 min", value: 15, kind: "sun" }],
+        onMount: box => { box.querySelectorAll("[data-dlg]").forEach(b => b.addEventListener("click", () => { toggleBreak.msg = box.querySelector("#brMsg").value.trim(); }, true)); }
+      });
+      if (!mins) return;
+      await update(aRef(), { breakUntil: serverNow() + mins * 60000, breakMsg: toggleBreak.msg || null });
     }
 
     async function undoLastSale() {
@@ -908,7 +985,7 @@
       if (confirmingUnsold || !["bidding", "paused"].includes(live.state)) return;
       confirmingUnsold = true;
       const s = S(), p = A.players[live.pid] || {}, leader = live.team && A.teams[live.team];
-      const heldClock = live.state === "bidding";
+      const heldClock = live.state === "bidding" && endsAt(live) - serverNow() > 0;
       if (heldClock) await togglePause();
       const steps = leader ? [
         ["Mark unsold?", `${leader.name} is leading with ${money(live.amount, s)} for ${p.name}.`, "Yes, continue"],
@@ -929,7 +1006,13 @@
     }
     $("restartBtn").onclick = async () => { if (await confirmBox("Restart bidding?", "Bidding on this player starts again from the base price.", { ok: "Restart", icon: "↺" })) startLot(L().pid, { skipFair: true }); };
     $("undoBtn").onclick = undoLastSale;
-    $("pool").addEventListener("click", e => { const b = e.target.closest("[data-call]"); if (b) startLot(b.dataset.call); });
+    $("undoUnsoldBtn").onclick = () => undoUnsold();
+    $("breakBtn").onclick = toggleBreak;
+    setInterval(() => { if (A) showBreak(A, DISPLAY ? {} : { compact: true, onEnd: () => update(aRef(), { breakUntil: null, breakMsg: null }) }); }, 500);
+    $("pool").addEventListener("click", e => {
+      const b = e.target.closest("[data-call]"); if (b) startLot(b.dataset.call);
+      const r = e.target.closest("[data-requeue]"); if (r) undoUnsold(r.dataset.requeue);
+    });
     $("endBtn").onclick = endAuction;
     $("qbRow").addEventListener("click", e => { const b = e.target.closest("[data-qb]"); if (b) hostBid(b.dataset.qb); });
 
@@ -940,8 +1023,9 @@
     $("fullBtn").onclick = toggleFull;
 
     document.addEventListener("keydown", e => {
-      if (!A || A.status !== "live" || e.target.closest("input, textarea, select") || document.querySelector(".modal-back")) return;
+      if (!A || e.target.closest("input, textarea, select") || document.querySelector(".modal-back")) return;
       const k = e.key.toLowerCase();
+      if (DISPLAY || A.status !== "live") { if (k === "f") toggleFull(); else if (k === "q") toggleBigQR(); return; }
       if (k === "n" || e.key === "ArrowRight") { if (!$("nextBtn").disabled) nextPlayer(); }
       else if (k === "p" || e.key === " ") { e.preventDefault(); if (!$("pauseBtn").disabled) togglePause(); }
       else if (k === "t") { if (!$("addTimeBtn").disabled) addTime(); }
@@ -987,6 +1071,7 @@
             <div class="squad-head">${crest(id, "lg")}<div><h3>${safe(t.name)}</h3><span class="muted">${mine.length} player${mine.length === 1 ? "" : "s"} · spent ${money(t.spent || 0, s)} · ${money(purseLeftOf(t, s), s)} left</span></div></div>
             ${missing.length ? `<p class="short-note">Short of minimum: ${safe(missing.join(", "))}</p>` : ""}
             <ul>${mine.map(([, p]) => `<li><span>${safe(p.name)}<span class="cat">${safe(catOf(p).name)}</span></span><span>${money(p.price, s)}</span></li>`).join("") || `<li><span class="muted">No players</span><span></span></li>`}</ul>
+            <div class="squad-actions"><button class="btn btn-light btn-sm" data-card="${id}">🖼 Squad card</button><button class="btn btn-light btn-sm" data-sqcsv="${id}">⬇ CSV</button></div>
           </div>`;
       }).join("");
       const unsold = players().filter(([, p]) => p.status !== "sold");
@@ -1004,6 +1089,14 @@
         ${unsold.length ? `<h3 class="section-title">Not sold (${unsold.length})</h3>
           <p class="muted">${unsold.map(([, p]) => safe(p.name)).join(" · ")}</p>` : ""}`;
       animate(r);
+      r.onclick = async e => {
+        const cb = e.target.closest("[data-card]"), cv = e.target.closest("[data-sqcsv]");
+        const id = (cb || cv || {}).dataset ? (cb ? cb.dataset.card : cv && cv.dataset.sqcsv) : null;
+        if (!id) return;
+        const name = `${A.teams[id].name} squad`.replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-");
+        if (cb) shareOrDownload(await squadCardBlob(A, id), `${name}.png`, `${A.teams[id].name} · ${A.title || "Auction"}`);
+        else downloadCSV(squadCSV(A, id), name);
+      };
       $("csvBtn").onclick = () => {
         const rows = [["Team", "Player", "Details", "Category", "Price", "Base price"]];
         teams().forEach(([id, t]) => players().filter(([, p]) => p.soldTo === id && p.status === "sold")

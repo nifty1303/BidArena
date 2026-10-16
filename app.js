@@ -586,6 +586,7 @@ export function downloadCSV(csv, name) {
 
 // ---------- sounds (made in the browser, no files) ----------
 let audioCtx = null;
+export const audioReady = () => !!audioCtx && audioCtx.state === "running";
 export function unlockAudio() {
   try {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -786,4 +787,104 @@ export function mountBidders(box, code, getTeams, crestFn, onCount) {
   box.addEventListener("click", onClick);
   draw();
   return { stop() { stop1(); stop2(); box.removeEventListener("click", onClick); }, redraw: draw, members: () => members };
+}
+
+
+// ============================================================
+// Breaks: a countdown on every screen while the host takes a short break
+// ============================================================
+// showBreak(A, { compact, onEnd }) — call every half second. compact = a slim banner (host controls stay usable).
+export function showBreak(A, opts = {}) {
+  let el = document.getElementById("breakOverlay");
+  const until = A && A.status === "live" && A.breakUntil;
+  if (!until) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "breakOverlay";
+    el.className = `break-overlay ${opts.compact ? "compact" : ""}`;
+    el.innerHTML = `<div class="break-card"><div class="break-ico" aria-hidden="true">☕</div>
+      <div class="break-text"><p class="break-title">Short break</p><span class="break-msg"></span></div>
+      <b class="break-clock"></b>${opts.onEnd ? `<button class="btn btn-sun" type="button">End break</button>` : ""}</div>`;
+    if (opts.onEnd) el.querySelector("button").onclick = opts.onEnd;
+    document.body.appendChild(el);
+  }
+  const left = Math.max(0, until - serverNow());
+  el.querySelector(".break-clock").textContent = left > 0 ? `${Math.floor(left / 60000)}:${String(Math.floor(left / 1000) % 60).padStart(2, "0")}` : "Any moment";
+  el.querySelector(".break-msg").textContent = A.breakMsg || "The auction carries on soon";
+}
+
+// ============================================================
+// Results to keep: a squad card image and a spreadsheet per team
+// ============================================================
+function hexRgb(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || "").trim());
+  const n = m ? parseInt(m[1], 16) : 0x1D5FD1;
+  return [n >> 16 & 255, n >> 8 & 255, n & 255];
+}
+const isLight = hex => { const l = hexRgb(hex).map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * l[0] + 0.7152 * l[1] + 0.0722 * l[2] > 0.45; };
+const shade = (hex, t) => "#" + hexRgb(hex).map(v => Math.round(t < 0 ? v * (1 + t) : v + (255 - v) * t).toString(16).padStart(2, "0")).join("");
+
+export function teamSquad(A, tid) {
+  const s = A.settings || {}, cats = catList(s);
+  return Object.values(A.players || {}).filter(p => p.status === "sold" && p.soldTo === tid)
+    .sort((a, b) => cats.findIndex(c => c.id === a.cat) - cats.findIndex(c => c.id === b.cat) || (b.price || 0) - (a.price || 0));
+}
+
+export async function squadCardBlob(A, tid) {
+  const s = A.settings || {}, t = (A.teams || {})[tid] || {}, cats = catList(s);
+  const squad = teamSquad(A, tid);
+  const W = 1080, H = 1350, col = t.color || "#1D5FD1", ink = isLight(col) ? "#13262A" : "#FFFFFF";
+  try { await Promise.all([document.fonts.load("800 90px 'Barlow Condensed'"), document.fonts.load("700 30px Barlow")]); } catch (e) {}
+  const c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  const bg = g.createLinearGradient(0, 0, W, H); bg.addColorStop(0, shade(col, 0.15)); bg.addColorStop(1, shade(col, -0.45));
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  const fit = (text, font, size, max) => { do { g.font = `${font.replace("{s}", size)}`; size -= 2; } while (g.measureText(text).width > max && size > 20); };
+  g.fillStyle = ink; g.globalAlpha = 0.85;
+  fit((A.title || "Auction").toUpperCase(), "700 {s}px Barlow, sans-serif", 32, W - 140);
+  g.fillText((A.title || "Auction").toUpperCase(), 70, 105);
+  g.globalAlpha = 1;
+  fit(String(t.name || "Team").toUpperCase(), "800 {s}px 'Barlow Condensed', sans-serif", 110, W - 140);
+  g.fillText(String(t.name || "Team").toUpperCase(), 70, 210);
+  g.font = "700 34px Barlow, sans-serif";
+  g.fillText(`${squad.length} player${squad.length === 1 ? "" : "s"} · spent ${money(t.spent || 0, s)} · ${money(purseLeftOf(t, s), s)} left`, 70, 262);
+  // the list
+  const top = 300, maxBottom = H - 110, x0 = 50, x1 = W - 50;
+  const n = Math.max(1, squad.length), rowH = Math.min(78, (maxBottom - top - 40) / n), big = Math.max(20, Math.min(36, rowH * 0.46));
+  const bottom = Math.min(maxBottom, top + 40 + n * rowH);                  // the panel fits the squad
+  g.fillStyle = "rgba(255,255,255,0.95)";
+  g.beginPath(); g.roundRect ? g.roundRect(x0, top, x1 - x0, bottom - top, 32) : g.rect(x0, top, x1 - x0, bottom - top); g.fill();
+  squad.forEach((p, i) => {
+    const y = top + 20 + i * rowH;
+    if (i) { g.fillStyle = "rgba(0,0,0,0.08)"; g.fillRect(x0 + 30, y, x1 - x0 - 60, 2); }
+    const sub = [((schemaFor(s.sport) || { roles: {} }).roles[p.role] || {}).name, (cats.find(cc => cc.id === p.cat) || {}).name].filter(Boolean).join(" · ");
+    g.fillStyle = "#13262A"; g.font = `700 ${big}px Barlow, sans-serif`;
+    g.fillText(String(p.name), x0 + 34, y + rowH * (sub && rowH > 50 ? 0.48 : 0.62), x1 - x0 - 300);
+    if (sub && rowH > 50) { g.fillStyle = "#5B6B6E"; g.font = `600 ${Math.round(big * 0.62)}px Barlow, sans-serif`; g.fillText(sub, x0 + 34, y + rowH * 0.84, x1 - x0 - 300); }
+    g.fillStyle = shade(col, isLight(col) ? -0.45 : 0); g.font = `800 ${Math.round(big * 1.15)}px 'Barlow Condensed', sans-serif`;
+    g.textAlign = "right"; g.fillText(money(p.price, s), x1 - 34, y + rowH * 0.66); g.textAlign = "left";
+  });
+  if (!squad.length) { g.fillStyle = "#5B6B6E"; g.font = "600 36px Barlow, sans-serif"; g.fillText("No players bought", x0 + 34, top + 80); }
+  g.fillStyle = ink; g.globalAlpha = 0.8; g.font = "700 28px Barlow, sans-serif";
+  g.fillText("BidArena · live player auction", 70, H - 48); g.globalAlpha = 1;
+  return new Promise(res => c.toBlob(res, "image/png"));
+}
+
+export function squadCSV(A, tid) {
+  const s = A.settings || {}, t = (A.teams || {})[tid] || {}, cats = catList(s);
+  const rows = [["Team", "Player", "Position", "Category", "Price"]];
+  teamSquad(A, tid).forEach(p => rows.push([t.name, p.name, playerLine(p, s), (cats.find(c => c.id === p.cat) || {}).name || "", p.price]));
+  rows.push([]); rows.push(["Spent", t.spent || 0]); rows.push(["Left", purseLeftOf(t, s)]);
+  return toCSV(rows);
+}
+
+// Share a file (phones open WhatsApp etc.), or download it where sharing isn't available
+export async function shareOrDownload(blob, filename, text = "") {
+  const file = new File([blob], filename, { type: blob.type });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], text }); return; }
+  } catch (e) { if (e && e.name === "AbortError") return; }
+  const url = URL.createObjectURL(blob), a = document.createElement("a");
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
 }

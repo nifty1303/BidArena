@@ -33,6 +33,10 @@ Import from Excel/CSV (download the template on the Players tab) or add one by o
 
 ## Running the room
 
-Keep the room tab open on the host PC: a player is sold when the timer runs out on that screen.
+- **Control room** (`room.html`) on your laptop; press 🖥 **Display** to open the projector screen (no controls, no host data; it can be opened on any computer).
+- The timer never sells by itself: when it runs out, bidding closes and the player waits for you. Press **Sold now** (S), or **Reopen +10s** (T) to take more bids, or **Unsold** (U).
+- **Undo unsold** puts the player who just went unsold back in the queue; ↩ in the unsold pool does the same for any unsold player.
+- **Break** shows a countdown on every screen; **Next player** ends it.
+- After **End auction**, setup is read-only until you press **Reopen auction**. Every team can share a squad card image or download its spreadsheet.
 Optional **fair price** (Setup → Basics → Bidding): when only one team can still buy a player it must have, you can assign it at the lowest price paid in that category instead of the base price.
 Shortcuts: N next · Space/P pause or resume · T +10s · S sold · U unsold · F full screen.

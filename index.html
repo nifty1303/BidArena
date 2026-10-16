@@ -581,11 +581,24 @@
       return photos[pid];
     }
 
-    // Full-screen green and gold confetti, in three bursts, with a quick green flash
-    function celebrate() {
-      const colours = ["#22C55E", "#0E8A43", "#FFD23F", "#FFFFFF", "#7CF29A", "#16A34A"];
+    // A team's colour, a lighter and darker shade, and readable text on it
+    function teamTones(hex) {
+      const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || "").trim());
+      const n = m ? parseInt(m[1], 16) : 0x1D5FD1;
+      const rgb = [n >> 16 & 255, n >> 8 & 255, n & 255];
+      const mix = (to, t) => "#" + rgb.map((v, i) => Math.round(v + (to[i] - v) * t).toString(16).padStart(2, "0")).join("");
+      const lum = rgb.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+      const light = 0.2126 * lum[0] + 0.7152 * lum[1] + 0.0722 * lum[2] > 0.45;
+      const base = mix([0, 0, 0], 0);
+      return { base, light: mix([255, 255, 255], 0.45), dark: mix([0, 0, 0], 0.35), ink: light ? "#13262A" : "#FFFFFF", hi: light ? mix([0, 0, 0], 0.55) : mix([255, 255, 255], 0.7) };
+    }
+
+    // Full-screen confetti in the team's colours (plus gold and white), in three bursts, with a quick flash
+    function celebrate(tc) {
+      const colours = [tc.base, tc.light, tc.dark, "#FFD23F", "#FFFFFF", tc.base];
       const flash = document.createElement("div");
       flash.className = "win-flash";
+      flash.style.setProperty("--c", tc.base);
       const box = document.createElement("div");
       box.className = "win-confetti";
       box.innerHTML = [[50, 40, 0], [22, 55, 0.25], [78, 55, 0.45]].map(([x, y, delay]) => `<div class="confetti" style="left:${x}%;top:${y}%">${
@@ -687,6 +700,8 @@
         if (live.state === "sold" && leader && live.team === myTeam) {
           // our team won the player: a green victory moment
           wrap.classList.add("win");
+          const tc = teamTones(leader.color);
+          wrap.style.cssText = `--c:${tc.base};--c-ink:${tc.ink};--c-hi:${tc.hi}`;
           wrap.innerHTML = `<div class="win-card">
               <div class="win-rays" aria-hidden="true"></div>
               <div class="win-trophy" aria-hidden="true">🏆</div>
@@ -696,7 +711,7 @@
               ${live.forced ? `<div class="win-sub" style="opacity:.85;font-size:13px">Auto-assigned: only team left that needed one</div>` : ""}
             </div>`;
           plot.appendChild(wrap);
-          celebrate();
+          celebrate(tc);
           sounds.sold();
           try { navigator.vibrate && navigator.vibrate([90, 60, 90, 60, 260]); } catch (e) {}
         } else if (live.state === "sold" && leader) {

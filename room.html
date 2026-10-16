@@ -469,9 +469,22 @@
         if (changed || true) {
           const sold = players().filter(([, p]) => p.status === "sold").length;
           const unsold = players().filter(([, p]) => p.status === "unsold").length;
-          const q = DISPLAY ? sharedNext() : plannedNext(live.pid || "");
+          const q = DISPLAY ? null : plannedNext(live.pid || "");
           const first = !Object.keys(A.sales || {}).length && !players().some(([, p]) => p.status === "unsold");
-          const html = bannerHTML(bannerSrcs, "stage-banner") + (first && q ? `
+          // The display screen never reveals who comes next
+          const left = pending().length;
+          const html = DISPLAY ? bannerHTML(bannerSrcs, "stage-banner") + (first ? `
+            <div class="idle">
+              <p class="bid-label">Tonight's contenders</p>
+              <h2 class="title">Welcome to <span>${safe(A.title || "the auction")}</span></h2>
+              <div class="parade">${teams().map(([id, t], k) => `<div class="pt" style="animation-delay:${k * 0.08}s">${crest(id, "xl")}${safe(t.name)}</div>`).join("")}</div>
+              <p class="lead">The first player is coming up…</p>
+            </div>` : `
+            <div class="idle">
+              <p class="bid-label">${left ? "Coming up" : "Almost done"}</p>
+              <h2 class="title">${left ? "Next player <span>coming up…</span>" : unsold ? "Unsold players may come back" : "That's <span>everyone!</span>"}</h2>
+              <p class="lead">${sold} sold · ${left} still to come${unsold ? ` · ${unsold} unsold` : ""}</p>
+            </div>`) : bannerHTML(bannerSrcs, "stage-banner") + (first && q ? `
             <div class="idle">
               <p class="bid-label">Tonight's contenders</p>
               <h2 class="title">Welcome to <span>${safe(A.title || "the auction")}</span></h2>
@@ -676,11 +689,9 @@
       $("pickBtn").disabled = onLot || live.state === "closing" || !pending().length;
       $("queueNote").textContent = q ? `Next: ${q.label} · ${q.left} to go${nextFrom ? "" : " · pick a category in “Next from” to draw from it"}` : "Queue empty: call from the unsold pool or end the auction.";
       // white "Next up" line under the stage: the player after the one on screen
-      let nx = DISPLAY ? sharedNext() : ["sold", "unsold"].includes(live.state) ? plannedNext(live.pid) : q;
-      if (!DISPLAY) {
-        const want = nx && A.players[nx.pid] ? { pid: nx.pid, label: nx.label } : null;
-        if (JSON.stringify(A.nextUp || null) !== JSON.stringify(want)) set(aRef("nextUp"), want).catch(() => {});
-      }
+      // "Next up" is for the auctioneer only: never on the display, and never saved where phones could read it
+      const nx = DISPLAY ? null : ["sold", "unsold"].includes(live.state) ? plannedNext(live.pid) : q;
+      if (!DISPLAY && A.nextUp) set(aRef("nextUp"), null).catch(() => {});     // clear what older versions stored
       const np = nx && A.players[nx.pid];
       $("nextUp").hidden = !np;
       if (np) $("nextUp").innerHTML = `<span class="nu-label">Next up</span><b>${safe(np.name)}</b><span class="nu-cat">${safe(nx.label)}${positionOf(np, s) ? ` · ${safe(positionOf(np, s))}` : ""}</span>`;
@@ -760,7 +771,6 @@
     let nextFrom = "", nextDraw = null;
     try { nextFrom = localStorage.getItem(`nextFrom_${code}`) || ""; } catch (e) {}
     const pendingIn = cid => pending().filter(([, p]) => p.cat === cid);
-    const sharedNext = () => (A.nextUp && A.players[A.nextUp.pid] && (A.players[A.nextUp.pid].status || "pending") !== "sold" ? A.nextUp : null);
     function plannedNext(skip = "") {
       if (nextFrom) {
         const cat = catList(S()).find(c => c.id === nextFrom);

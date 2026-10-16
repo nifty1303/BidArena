@@ -17,11 +17,11 @@
       <h1 id="roomTitle" class="room-title"></h1>
       <span id="livePill" class="pill live" hidden>● Live</span>
       <span id="joinChip" class="join-chip" hidden></span>
-      <button id="watchBtn" class="btn btn-dark req-btn" title="Who's watching">👀 <span id="watchCount">0</span> watching</button>
+      <button id="watchBtn" class="btn btn-dark req-btn" title="Who's watching">👀 <span id="watchCount">0</span><span class="lbl"> watching</span></button>
       <button id="qrBtn" class="btn btn-dark" title="Show the viewer QR code big (Q)" aria-label="Show QR code">▦</button>
-      <button id="biddersBtn" class="btn btn-dark req-btn" title="Approve who can bid">👥 Bidders<span class="badge" id="bidderCount" hidden></span></button>
-      <button id="reqBtn" class="btn btn-dark req-btn" hidden>Team requests<span class="badge" id="reqCount"></span></button>
-      <a id="setupLink" class="btn btn-dark" href="host.html">⚙ Setup</a>
+      <button id="biddersBtn" class="btn btn-dark req-btn" title="Bidders: approve who can bid">👥<span class="lbl"> Bidders</span><span class="badge" id="bidderCount" hidden></span></button>
+      <button id="reqBtn" class="btn btn-dark req-btn" title="Team requests" hidden>📨<span class="lbl"> Team requests</span><span class="badge" id="reqCount"></span></button>
+      <a id="setupLink" class="btn btn-dark" href="host.html" title="Setup">⚙<span class="lbl"> Setup</span></a>
       <button id="fullBtn" class="btn btn-dark" title="Full screen (F)">⛶</button>
     </div>
 
@@ -93,6 +93,17 @@
     const photos = {};
     const logos = {};                 // team pictures
     const crest = (id, size = "") => crestHTML(A.teams[id], logoOf(logos, id), size);
+
+    // The auction name always shows in full: up to two lines, shrinking a little if it's very long
+    function fitTitle() {
+      const el = $("roomTitle");
+      el.style.fontSize = "";
+      let size = parseFloat(getComputedStyle(el).fontSize);
+      const lineH = () => parseFloat(getComputedStyle(el).lineHeight) || size * 1.05;
+      while (size > 16 && el.scrollHeight > lineH() * 2 + 2) { size -= 1; el.style.fontSize = size + "px"; }
+    }
+    addEventListener("resize", () => { clearTimeout(fitTitle.t); fitTitle.t = setTimeout(fitTitle, 150); });
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => fitTitle());
 
     function message(html) {
       $("message").innerHTML = html;
@@ -230,7 +241,7 @@
 
     function render() {
       applySportTheme(S().sport);
-      $("roomTitle").textContent = A.title || "Auction";
+      if ($("roomTitle").textContent !== (A.title || "Auction")) { $("roomTitle").textContent = A.title || "Auction"; fitTitle(); requestAnimationFrame(fitTitle); }
       document.title = `${A.title || "Auction"} · Auction room`;
       const base = new URL("./", location.href).href;
       $("joinChip").innerHTML = `<span class="jc-url">Join at<br><b>${safe(base.replace(/^https?:\/\//, "").replace(/\/$/, ""))}</b></span><strong>${code}</strong>`;

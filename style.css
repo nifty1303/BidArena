@@ -945,3 +945,14 @@ body.has-bidbar .toast { bottom: 190px; }
 .switch-mode { margin: 14px 0 0; text-align: center; color: var(--dim); font-weight: 600; }
 .switch-mode .link-btn { font-weight: 800; }
 .input.big.name-in { text-transform: none; letter-spacing: normal; font-family: var(--body); font-size: 22px; font-weight: 700; }
+
+/* ---------- room top bar: the auction name is never cut off ---------- */
+.room-top .room-title { flex: 1 1 260px; min-width: 200px; white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.05; overflow-wrap: break-word; }
+.room-top .btn .lbl { white-space: nowrap; }
+@media (min-width: 1151px) {
+  .room-top { flex-wrap: nowrap; }
+  .room-top > * { flex: none; }
+  .room-top .room-title { flex: 1 1 auto; min-width: 0; }
+}
+@media (max-width: 1700px) { .room-top .btn .lbl { display: none; } }      /* icons only, names as tooltips */
+@media (max-width: 1400px) { .room-top .jc-url { display: none; } }

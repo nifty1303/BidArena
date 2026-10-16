@@ -84,7 +84,7 @@
       catColour, crestHTML, loadTeamLogos, logoOf,
       CURRENCIES, SPORTS, sportOf, sportName, sportIcon, schemaFor, sportDefaults, applySportTheme, mountSportPicker,
       readSheetFile, norm, matchRole, matchSub, matchHand, cleanAge,
-      dialog, alertBox, confirmBox, copyText, teamBudget, allMaxBids, compressBanner, loadBanners, mountBidders, initials
+      dialog, alertBox, confirmBox, copyText, teamBudget, allMaxBids, compressBanner, loadBanners, mountBidders, initials, positionOf
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction setup");
@@ -299,6 +299,7 @@
         const copy = { owner: user.uid, title, status: "setup", createdAt: serverTimestamp(), settings: src.settings || {}, teams: teamsNew };
         if (Object.keys(playersNew).length) copy.players = playersNew;
         if (opt.photos && src.banners) copy.banners = src.banners;
+        if (Object.keys(playersNew).length && src.imports) copy.imports = src.imports;
         await set(ref(db, `auctions/${nc}`), copy);
         await set(ref(db, `auctionSecrets/${nc}`), { teamPins });
         await set(ref(db, `auctionsByOwner/${user.uid}/${nc}`), { title, sport: (src.settings || {}).sport || "", status: "setup", createdAt: serverTimestamp() });
@@ -922,7 +923,8 @@
            <summary style="cursor:pointer;font-weight:700">Or paste rows copied from Excel</summary>
            <textarea id="bulkText" class="textarea" style="margin-top:8px" placeholder="${safe(columns().map(c => c.label).join(", "))}"></textarea>
            <button id="bulkAdd" class="btn btn-sun btn-sm" style="margin-top:8px">Add these players</button>
-         </details>`);
+         </details>
+         ${importsHTML()}`);
 
       const addSec = sec("green", "➕", "Add one player", "",
         `<div class="add-grid">
@@ -990,7 +992,7 @@
       pz.addEventListener("dragleave", () => pz.classList.remove("over"));
       pz.addEventListener("drop", e => { e.preventDefault(); pz.classList.remove("over"); const f = [...e.dataTransfer.files].filter(x => x.type.startsWith("image/")); if (f.length) importPhotos(f); });
       $("aPhoto").onchange = e => { const f = e.target.files[0]; $("aPhotoLbl").textContent = f ? `✓ ${f.name.slice(0, 18)}` : "📷 Choose photo"; };
-      $("bulkAdd").onclick = () => importRows(parseTable($("bulkText").value || ""));
+      $("bulkAdd").onclick = () => importRows(parseTable($("bulkText").value || ""), "Pasted rows");
       // add one
       $("pAdd").onclick = addOne;
       $("aName").addEventListener("keydown", e => { if (e.key === "Enter") addOne(); });
@@ -1063,17 +1065,82 @@
         buttons: [{ label: "OK", value: true, kind: "sun" }] });
     }
 
+    // ---------- files already imported: see their players, download them, or remove them ----------
+    const batchPlayers = b => playerList().filter(([, p]) => p.batch === b);
+    function importsHTML() {
+      const list = Object.entries(A.imports || {}).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
+      if (!list.length) return "";
+      return `<div class="imports">
+        <p class="label" style="margin-top:16px">Imported files <span class="muted" style="font-weight:600">· ${list.length}</span></p>
+        ${list.map(([b, f]) => {
+          const ps = batchPlayers(b), sold = ps.filter(([, p]) => p.status === "sold").length;
+          return `<div class="import-row">
+            <span class="import-ico" aria-hidden="true">${/\.(xlsx|xls|xlsm|ods)$/i.test(f.name) ? "📗" : f.name === "Pasted rows" ? "📋" : "📄"}</span>
+            <div class="grow"><b>${safe(f.name)}</b>
+              <small>${f.at ? new Date(f.at).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + " · " : ""}added ${f.count || 0} player${f.count === 1 ? "" : "s"} · <b>${ps.length}</b> still in the list${sold ? ` (${sold} sold)` : ""}</small></div>
+            <button class="btn btn-light btn-sm" data-iview="${b}">View</button>
+            <button class="btn btn-danger btn-sm" data-iremove="${b}">Remove</button>
+          </div>`;
+        }).join("")}
+      </div>`;
+    }
+    function viewImport(b) {
+      const f = (A.imports || {})[b] || {}, ps = batchPlayers(b), s = A.settings;
+      const catName = id => (catList(s).find(c => c.id === id) || { name: "–" }).name;
+      dialog({
+        title: f.name || "Imported file", icon: "📄", wide: true, dismiss: true,
+        html: ps.length ? `<p>${ps.length} player${ps.length === 1 ? "" : "s"} from this file are in the list.</p>
+          <div class="table-scroll" style="max-height:50vh"><table class="import-table"><thead><tr><th>Name</th><th>Age</th><th>${safe((sch() || {}).roleLabel || "Info")}</th><th>Special attributes</th><th>Favourite player</th><th>Category</th><th>Status</th></tr></thead>
+          <tbody>${ps.map(([, p]) => `<tr><td><b>${safe(p.name)}</b></td><td>${safe(p.age || "")}</td><td>${safe(positionOf(p, s) || p.info || "")}</td><td>${safe(p.attrs || "")}</td><td>${safe(p.fav || "")}</td><td>${safe(catName(p.cat))}</td><td>${p.status === "sold" ? "Sold" : p.status === "unsold" ? "Unsold" : "Waiting"}</td></tr>`).join("")}</tbody></table></div>`
+          : `<p>None of this file's players are in the list any more.</p>`,
+        buttons: [...(ps.length ? [{ label: "Download as CSV", value: "csv", kind: "light" }] : []), { label: "Close", value: true, kind: "sun" }]
+      }).then(v => {
+        if (v !== "csv") return;
+        const cols = columns();
+        const rows = ps.map(([, p]) => cols.map(c => c.key === "cat" ? catName(p.cat) : c.key === "role" ? ((sch() || { roles: {} }).roles[p.role] || {}).name || "" : c.key === "foot" || c.key === "batHand" || c.key === "bowlHand" ? ({ R: "Right", L: "Left", B: "Both" })[p[c.key]] || "" : p[c.key] ?? ""));
+        downloadCSV(toCSV([cols.map(c => c.label), ...rows]), String(f.name || "players").replace(/\.[^.]+$/, ""));
+      });
+    }
+    async function removeImport(b) {
+      const f = (A.imports || {})[b] || {}, ps = batchPlayers(b);
+      const removable = ps.filter(([, p]) => p.status !== "sold"), sold = ps.length - removable.length;
+      const ok = await confirmBox(`Remove “${f.name || "this file"}”?`,
+        removable.length
+          ? `${removable.length} player${removable.length === 1 ? "" : "s"} from this file, and their photos, will be removed from the auction.${sold ? ` ${sold} already sold ${sold === 1 ? "stays" : "stay"}.` : ""} Players you added by hand or from other files aren't touched.`
+          : `None of its players are left to remove${sold ? ` (${sold} are sold and stay)` : ""}. The file is just taken off this list.`,
+        { ok: removable.length ? `Remove ${removable.length} player${removable.length === 1 ? "" : "s"}` : "Remove from list", danger: true });
+      if (!ok) return;
+      const changes = sold ? {} : { [`auctions/${code}/imports/${b}`]: null };
+      removable.forEach(([id]) => {
+        changes[`auctions/${code}/players/${id}`] = null;
+        changes[`auctionPhotos/${code}/${id}`] = null;
+        delete A.players[id];
+      });
+      await update(ref(db), changes);
+      if (!sold) delete A.imports[b];
+      renderPlayers(); updateTop();
+      toast(removable.length ? `Removed ${removable.length} player${removable.length === 1 ? "" : "s"}` : "Removed from the list");
+    }
+    $("pane-players").addEventListener("click", e => {
+      const v = e.target.closest("[data-iview]"), r = e.target.closest("[data-iremove]");
+      if (v) viewImport(v.dataset.iview);
+      if (r) removeImport(r.dataset.iremove);
+    });
+
     async function importFile(file) {
-      try { importRows(await readSheetFile(file)); }
+      try { importRows(await readSheetFile(file), file.name); }
       catch (e) { alertBox("File not read", e.message || "That file couldn't be read.", "📄"); }
     }
 
     // Rows from Excel/CSV → players. Columns found by header name, or by template order.
-    async function importRows(rows) {
+    async function importRows(rows, source = "Imported file") {
       rows = (rows || []).filter(r => r.some(c => String(c).trim()));
       if (!rows.length) { toast("No rows found."); return; }
+      const batch = newId();                       // every player from this file remembers it, so the file can be removed later
       const s = A.settings, S = sch(), sport = s.sport;
-      const heads = rows[0].map(h => { const n = norm(h); return (Object.entries(ALIASES).find(([, a]) => a.includes(n)) || [])[0] || null; });
+      // headers: this sport's own column names first (football "Role" is the sub position), then common aliases
+      const cols = columns();
+      const heads = rows[0].map(h => { const n = norm(h); return (cols.find(c => norm(c.label) === n) || {}).key || (Object.entries(ALIASES).find(([, a]) => a.includes(n)) || [])[0] || null; });
       let map;
       if (heads.includes("name")) { map = heads; rows = rows.slice(1); }
       else map = columns().map(c => c.key);
@@ -1118,13 +1185,19 @@
         if (!cat && p.role && s.cats[p.role]) cat = p.role;
         if (!cat && p.role) cat = findCat(S.roles[p.role].name);
         p.cat = cat || (catList(s)[0] || {}).id;
+        p.batch = batch;
         const id = newId(), clean = tidy(p);
         A.players[id] = clean;
         changes[`auctions/${code}/players/${id}`] = clean;
         added++;
       }
       if (newCats) changes[`auctions/${code}/settings/cats`] = s.cats;
-      if (added) await update(ref(db), changes);
+      if (added) {
+        const rec = { name: String(source).slice(0, 80), count: added, at: serverTimestamp() };
+        changes[`auctions/${code}/imports/${batch}`] = rec;
+        await update(ref(db), changes);
+        A.imports = { ...(A.imports || {}), [batch]: { ...rec, at: Date.now() } };
+      }
       renderPlayers(); updateTop();
       const bits = [`Added ${added} player${added === 1 ? "" : "s"}`];
       if (dupes) bits.push(`skipped ${dupes} already in the list`);

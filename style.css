@@ -1051,3 +1051,4 @@ body.display-mode #setupLink, body.display-mode #csvBtn, body.display-mode #reop
 .ended-bar span { flex: 1; min-width: 220px; }
 .locked-pane .drop, .locked-pane .crest-edit, .locked-pane .thumb-add, .locked-pane .banner-add, .locked-pane .photo-pick, .locked-pane .drag-handle, .locked-pane .swatch { pointer-events: none; opacity: 0.55; }
 body.display-mode #nextUp { display: none !important; }
+.import-row.pseudo { background: #F7F9F8; border-style: dashed; }

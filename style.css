@@ -973,3 +973,28 @@ body.has-bidbar .toast { bottom: 190px; }
 /* leader chip: "Leading bid" above the team name */
 .leader .ld-txt { display: flex; flex-direction: column; line-height: 1; }
 .leader .ld-txt small { font-family: var(--body); font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); margin-bottom: 3px; }
+
+/* ---------- phone: our team won the player ---------- */
+.stamp-wrap.win { background: radial-gradient(circle at 50% 45%, rgba(34, 197, 94, 0.32), rgba(6, 78, 40, 0.55)); backdrop-filter: blur(4px); }
+.win-card { position: relative; overflow: hidden; display: grid; justify-items: center; gap: 4px; padding: 22px 34px 20px; border-radius: 26px; text-align: center; color: #fff;
+  background: linear-gradient(160deg, #2BD46A, #0B7A3B 70%); border: 4px solid #FFD23F;
+  box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.65), 0 24px 60px rgba(6, 78, 40, 0.5);
+  animation: winPop 0.75s cubic-bezier(0.2, 1.6, 0.4, 1) both, winGlow 1.5s ease-out 0.75s infinite; }
+.win-card > * { position: relative; z-index: 1; }
+.win-card > .win-rays { position: absolute; inset: -60%; z-index: 0; background: repeating-conic-gradient(from 0deg, rgba(255, 255, 255, 0.16) 0 9deg, transparent 9deg 18deg); animation: winSpin 9s linear infinite; }
+.win-trophy { font-size: 46px; line-height: 1; animation: winBounce 0.9s ease-in-out 0.6s infinite alternate; }
+.win-word { font-family: var(--display); font-size: clamp(56px, 17vw, 76px); font-weight: 800; line-height: 0.9; letter-spacing: 0.04em; text-shadow: 0 4px 0 rgba(0, 0, 0, 0.18); }
+.win-player { font-family: var(--display); font-size: 24px; font-weight: 800; text-transform: uppercase; color: #FFE680; line-height: 1.05; overflow-wrap: anywhere; }
+.win-sub { font-size: 15px; font-weight: 700; opacity: 0.95; }
+@keyframes winPop { 0% { transform: scale(0.2) rotate(-14deg); opacity: 0; } 60% { transform: scale(1.12) rotate(3deg); opacity: 1; } 100% { transform: scale(1) rotate(-2deg); } }
+@keyframes winGlow { 0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.65), 0 24px 60px rgba(6, 78, 40, 0.5); } 100% { box-shadow: 0 0 0 22px rgba(34, 197, 94, 0), 0 24px 60px rgba(6, 78, 40, 0.5); } }
+@keyframes winSpin { to { transform: rotate(360deg); } }
+@keyframes winBounce { from { transform: translateY(0) rotate(-6deg); } to { transform: translateY(-8px) rotate(6deg); } }
+.win-flash { position: fixed; inset: 0; z-index: 70; pointer-events: none; background: rgba(34, 197, 94, 0.38); animation: flash 0.8s ease-out forwards; }
+.win-confetti { position: fixed; inset: 0; z-index: 71; pointer-events: none; overflow: hidden; }
+.win-confetti .confetti i { animation-duration: 2.2s; }
+@media (prefers-reduced-motion: reduce) {
+  .win-card, .win-card > .win-rays, .win-trophy { animation: none; }
+  .win-confetti, .win-flash { display: none; }
+}
+.win-card { max-width: calc(100% - 28px); box-sizing: border-box; padding-left: 22px; padding-right: 22px; }

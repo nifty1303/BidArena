@@ -392,6 +392,8 @@ tr.no-cat td { background: color-mix(in srgb, var(--hot) 6%, #fff); }
 .history .amt { font-family: var(--display); font-weight: 800; font-size: 18px; }
 
 .going { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 4; padding: 8px 26px; border-radius: 999px; font-family: var(--display); font-size: 30px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; background: var(--hot); color: #fff; box-shadow: 0 10px 30px rgba(215, 38, 61, 0.4); animation: goingIn 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+.going.paused { background: var(--ink); color: #fff; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); animation: goingIn 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) both, pausedBlink 1.6s ease-in-out 0.5s infinite; }
+@keyframes pausedBlink { 50% { opacity: 0.55; } }
 .going.twice { background: var(--gold); color: #13262A; box-shadow: 0 10px 30px rgba(224, 161, 0, 0.4); }
 @keyframes goingIn { from { opacity: 0; transform: translateX(-50%) translateY(-20px) scale(0.7); } to { opacity: 1; transform: translateX(-50%); } }
 
@@ -775,3 +777,16 @@ tr.no-cat td { background: color-mix(in srgb, var(--hot) 6%, #fff); }
 }
 .host-pill { white-space: nowrap; }
 @media (max-width: 560px) { .wrap.wide .host-pill { display: none; } }
+
+/* KAFCO venue showcase on the landing page */
+.venue { position: relative; margin-top: 26px; min-height: clamp(280px, 42vw, 460px); border-radius: 28px; overflow: hidden; box-shadow: var(--shadow); display: flex; align-items: flex-end; background: #0d1b2a; }
+.venue img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 1.2s ease; }
+.venue img.on { opacity: 1; }
+.venue-cap { position: relative; width: 100%; padding: clamp(22px, 4vw, 40px); padding-top: 90px; color: #fff; background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.72) 100%); }
+.venue-cap .eyebrow { color: #fff; opacity: 0.85; }
+.venue-cap .l-title { margin: 0; font-size: clamp(48px, 7vw, 88px); color: #fff; }
+.venue-cap p:last-child { margin: 6px 0 0; font-size: 18px; font-weight: 600; opacity: 0.92; }
+.venue-dots { position: absolute; right: 22px; bottom: 22px; display: flex; gap: 8px; }
+.venue-dots i { width: 10px; height: 10px; border-radius: 50%; background: rgba(255, 255, 255, 0.45); transition: background 0.3s; }
+.venue-dots i.on { background: #fff; }
+@media (prefers-reduced-motion: reduce) { .venue img { transition: none; } }

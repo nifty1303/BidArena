@@ -89,6 +89,17 @@
           </div>
         </section>
 
+        <section class="venue" aria-label="Our venue: KAFCO">
+          <img src="Images/KAFCO_2.jpeg" alt="KAFCO grounds by day" class="on">
+          <img src="Images/KAFCO_1.jpeg" alt="KAFCO grounds at night">
+          <div class="venue-cap">
+            <p class="eyebrow">Our home ground</p>
+            <h2 class="l-title">KAFCO</h2>
+            <p>Where the squads are built and the season is played.</p>
+          </div>
+          <div class="venue-dots" aria-hidden="true"><i class="on"></i><i></i></div>
+        </section>
+
         <section class="l-sec">
           <p class="eyebrow">Why BidArena</p>
           <h2 class="l-title">Everything auction night needs</h2>
@@ -126,6 +137,7 @@
           <a class="link-btn" href="host.html">Host an auction</a>
         </footer>`;
       animate(view);
+      startVenueShow();
       const go = async () => {
         unlockAudio();
         const c = $("codeIn").value.trim().toUpperCase();
@@ -137,6 +149,20 @@
       $("codeGo").onclick = go;
       $("codeIn").addEventListener("keydown", e => { if (e.key === "Enter") go(); });
       if (message) $("join").scrollIntoView({ block: "center" });
+    }
+
+    // KAFCO photos take turns on the landing page
+    let venueTimer = null;
+    function startVenueShow() {
+      clearInterval(venueTimer);
+      let k = 0;
+      venueTimer = setInterval(() => {
+        const box = view.querySelector(".venue");
+        if (!box) { clearInterval(venueTimer); return; }
+        k = (k + 1) % 2;
+        box.querySelectorAll("img").forEach((img, i) => img.classList.toggle("on", i === k));
+        box.querySelectorAll(".venue-dots i").forEach((d, i) => d.classList.toggle("on", i === k));
+      }, 5000);
     }
 
     async function openAuction(c) {
@@ -425,16 +451,16 @@
       const secs = Math.ceil(left / 1000);
       bar.classList.toggle("low", live.state === "bidding" && secs <= 5);
       $("pLeft").textContent = live.state === "paused" ? "Paused" : live.state === "bidding" ? `${secs}s left` : "";
-      const going = live.state === "bidding" && live.team ? (secs <= 2 && secs > 0 ? "twice" : secs <= 4 && secs > 2 ? "once" : "") : "";
+      const going = live.state === "paused" ? "paused" : live.state === "bidding" && live.team ? (secs <= 2 && secs > 0 ? "twice" : secs <= 4 && secs > 2 ? "once" : "") : "";
       if (going !== lastGoing) {
         lastGoing = going;
         $("plot").querySelector(".going")?.remove();
         if (going) {
           const g = document.createElement("div");
           g.className = `going ${going}`;
-          g.textContent = going === "once" ? "Going once…" : "Going twice…";
+          g.textContent = going === "paused" ? "⏸ Paused by host" : going === "once" ? "Going once…" : "Going twice…";
           $("plot").appendChild(g);
-          if (myTeam && live.team !== myTeam) { try { navigator.vibrate && navigator.vibrate(60); } catch (e) {} }
+          if (going !== "paused" && myTeam && live.team !== myTeam) { try { navigator.vibrate && navigator.vibrate(60); } catch (e) {} }
         }
       }
       if (!team() || !$("bidBtn")) return;

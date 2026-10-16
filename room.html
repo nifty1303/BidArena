@@ -34,7 +34,8 @@
           <button id="nextBtn" class="btn btn-sun btn-lg">Next player ▶</button>
           <button id="pickBtn" class="btn btn-dark">Choose player</button>
           <span class="sep"></span>
-          <button id="pauseBtn" class="btn btn-dark">⏸ Pause</button>
+          <button id="pauseBtn" class="btn btn-dark btn-lg">⏸ Pause timer</button>
+          <button id="addTimeBtn" class="btn btn-dark" title="Give 10 more seconds">+10s</button>
           <button id="soldBtn" class="btn btn-dark">🔨 Sold now</button>
           <button id="unsoldBtn" class="btn btn-dark">Unsold</button>
           <button id="restartBtn" class="btn btn-dark">↺ Restart bidding</button>
@@ -47,7 +48,7 @@
           <div id="qbRow" class="qb-row"></div>
         </div>
         <div class="ticker" id="ticker" hidden><span class="ticker-label">🔨 Sold</span><div class="ticker-track" id="tickerTrack"></div></div>
-        <p class="kbd">Shortcuts: <b>N</b> next · <b>P</b> pause · <b>S</b> sold · <b>U</b> unsold · <b>F</b> full screen</p>
+        <p class="kbd">Shortcuts: <b>N</b> next · <b>P</b> or <b>Space</b> pause / resume · <b>T</b> +10s · <b>S</b> sold · <b>U</b> unsold · <b>F</b> full screen</p>
         <p id="queueNote" class="kbd" style="margin-top:6px"></p>
       </div>
 
@@ -438,7 +439,7 @@
       $("ringNote").textContent = live.state === "paused" ? "Paused" : live.state === "bidding" ? "seconds left" : "";
       ring.classList.toggle("low", live.state === "bidding" && secs <= 5);
       if (live.state === "bidding" && secs <= 5 && secs > 0 && secs !== lastTick) { lastTick = secs; sounds.tick(); }
-      showGoing(live.state === "bidding" && live.team ? (secs <= 2 && secs > 0 ? "twice" : secs <= 4 && secs > 2 ? "once" : "") : "");
+      showGoing(live.state === "paused" ? "paused" : live.state === "bidding" && live.team ? (secs <= 2 && secs > 0 ? "twice" : secs <= 4 && secs > 2 ? "once" : "") : "");
       // Time's up: the host's screen closes the sale
       if (live.state === "bidding" && left <= 0 && !closing) finalize(false);
     }
@@ -452,9 +453,9 @@
       if (!which) return;
       const b = document.createElement("div");
       b.className = `going ${which}`;
-      b.textContent = which === "once" ? "Going once…" : "Going twice…";
+      b.textContent = which === "paused" ? "⏸ Paused" : which === "once" ? "Going once…" : "Going twice…";
       $("stage").appendChild(b);
-      sounds.going();
+      if (which !== "paused") sounds.going();
     }
 
     // ---------- teams board ----------
@@ -510,7 +511,9 @@
       $("pickBtn").disabled = onLot || live.state === "closing" || !pending().length;
       $("queueNote").textContent = q ? `Queue: ${q.label} · ${q.left} to go` : "Queue empty: call from the unsold pool or end the auction.";
       $("pauseBtn").disabled = !onLot;
-      $("pauseBtn").textContent = live.state === "paused" ? "▶ Resume" : "⏸ Pause";
+      $("pauseBtn").textContent = live.state === "paused" ? "▶ Resume timer" : "⏸ Pause timer";
+      $("pauseBtn").className = `btn btn-lg ${live.state === "paused" ? "btn-sun" : "btn-dark"}`;
+      $("addTimeBtn").disabled = !onLot;
       $("soldBtn").disabled = !onLot || !live.team;
       $("unsoldBtn").disabled = !onLot;
       $("restartBtn").disabled = !live.pid || live.state === "closing" || (A.players[live.pid] || {}).status === "sold";
@@ -606,6 +609,15 @@
       else if (live.state === "paused") await update(aRef("live"), { state: "bidding", clockFrom: serverNow() - live.timerMs + Math.max(3000, live.pausedLeft || 0), pausedLeft: null });
     }
 
+    // Give the current player 10 more seconds (works while running or paused)
+    async function addTime() {
+      const live = L();
+      if (live.state === "bidding") await update(aRef("live"), { clockFrom: Math.max(live.clockFrom || 0, serverNow() - live.timerMs) + 10000 });
+      else if (live.state === "paused") await update(aRef("live"), { pausedLeft: (live.pausedLeft || 0) + 10000 });
+      else return;
+      toast("+10 seconds");
+    }
+
     async function undoLastSale() {
       const sales = Object.entries(A.sales || {}).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
       if (!sales.length) return;
@@ -673,6 +685,7 @@
     $("nextBtn").onclick = nextPlayer;
     $("pickBtn").onclick = pickPlayer;
     $("pauseBtn").onclick = togglePause;
+    $("addTimeBtn").onclick = addTime;
     $("soldBtn").onclick = () => finalize(false);
     $("unsoldBtn").onclick = async () => { if (!L().team || await confirmBox("Mark unsold?", "There are bids on this player. They'll be cleared and the player goes to the unsold pool.", { ok: "Mark unsold", danger: true })) finalize(true); };
     $("restartBtn").onclick = async () => { if (await confirmBox("Restart bidding?", "Bidding on this player starts again from the base price.", { ok: "Restart", icon: "↺" })) startLot(L().pid); };
@@ -691,7 +704,8 @@
       if (!A || A.status !== "live" || e.target.closest("input, textarea, select") || document.querySelector(".modal-back")) return;
       const k = e.key.toLowerCase();
       if (k === "n" || e.key === "ArrowRight") { if (!$("nextBtn").disabled) nextPlayer(); }
-      else if (k === "p") { if (!$("pauseBtn").disabled) togglePause(); }
+      else if (k === "p" || e.key === " ") { e.preventDefault(); if (!$("pauseBtn").disabled) togglePause(); }
+      else if (k === "t") { if (!$("addTimeBtn").disabled) addTime(); }
       else if (k === "s") { if (!$("soldBtn").disabled) finalize(false); }
       else if (k === "u") { if (!$("unsoldBtn").disabled) $("unsoldBtn").click(); }
       else if (k === "f") toggleFull();

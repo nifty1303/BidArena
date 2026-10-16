@@ -928,3 +928,15 @@ body.has-bidbar .toast { bottom: 190px; }
 .resume-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--gold, #E0A100); flex: 0 0 auto; }
 .resume-dot.live { background: var(--hot, #D7263D); animation: livePulse 1.6s infinite; }
 .loading-card { text-align: center; padding: 30px; font-weight: 700; color: var(--dim); }
+
+/* ---------- imported files ---------- */
+.imports { display: grid; gap: 8px; }
+.import-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border-radius: 14px; background: #fff; border: 1px solid var(--line); }
+.import-row .grow { min-width: 200px; }
+.import-row b { display: block; overflow-wrap: anywhere; }
+.import-row small { color: var(--dim); }
+.import-row small b { display: inline; color: var(--ink); }
+.import-ico { font-size: 24px; }
+.import-table { width: 100%; border-collapse: collapse; font-size: 14px; text-align: left; }
+.import-table th { position: sticky; top: 0; background: #fff; padding: 6px 8px; color: var(--dim); font-size: 12px; white-space: nowrap; }
+.import-table td { padding: 6px 8px; border-top: 1px solid var(--line); }

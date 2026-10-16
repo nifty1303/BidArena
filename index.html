@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BidArena · Live player auctions</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700;800&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-sport="home">
+  <main class="wrap phone">
+    <div class="topbar"><span id="brandSlot"></span><a class="host-pill" id="hostPill" href="host.html"><span aria-hidden="true">🔨</span> Host an auction</a></div>
+    <section id="view"></section>
+  </main>
+
+  <script type="module">
+    import {
+      db, ref, get, set, update, push, onValue, serverTimestamp, serverNow, ensureGuest,
+      safe, animate, initials, money, nextBid, stepFor, sounds, unlockAudio, confetti, brandHTML, endsAt,
+      catList, catMax, squadLimits, squadText, catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine, purseLeftOf
+    } from "./app.js";
+
+    document.getElementById("brandSlot").innerHTML = brandHTML("Live auctions");
+    const view = document.getElementById("view");
+    const $ = id => document.getElementById(id);
+    const params = new URLSearchParams(location.search);
+
+    let me = null;               // signed-in (invisible) user
+    let code = null, A = null;
+    let myTeam = null;           // team id, or null when just watching
+    let stopListen = null;
+    let lastKey = "", lastSeq = -1, wasLeading = false;
+    let myWish = {};             // this team's private wishlist
+    let stopWish = null;
+    let lastGoing = "";
+    const logos = {};            // team pictures
+    const crest = (id, size = "") => crestHTML((A.teams || {})[id], logoOf(logos, id), size);
+    const photos = {};
+
+    const SAVE_KEY = "auctionSeat";
+    const saveSeat = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ code, team: myTeam })); } catch (e) {} };
+    const clearSeat = () => { try { localStorage.removeItem(SAVE_KEY); } catch (e) {} };
+
+    // ============================================================
+    // Step 1: auction code
+    // ============================================================
+    // ============================================================
+    // Landing: what BidArena is, join with a code, or host
+    // ============================================================
+    const GAVEL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 3.5l6 6M12 6l6 6M10.5 7.5l6 6-2.5 2.5-6-6z"/><path d="M8.5 12.5L3 18l3 3 5.5-5.5"/></svg>`;
+    const setWide = on => { document.querySelector("main").classList.toggle("phone", !on); document.querySelector("main").classList.toggle("wide", on); };
+
+    function showCodeForm(message = "") {
+      if (stopListen) { stopListen(); stopListen = null; }
+      code = null; A = null; myTeam = null;
+      applySportTheme(null);
+      setWide(true);
+      $("hostPill").hidden = false;
+      view.innerHTML = `
+        <section class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Live team auctions for any sport</p>
+            <h1 class="hero-title">Build the squad.<br>Win the room.</h1>
+            <p class="hero-lead">BidArena runs a real player auction for your tournament. Teams bid live from their own phones, budgets and squad rules are checked for you, and the big screen brings the drama.</p>
+            <div class="hero-ctas">
+              <a class="host-hero" href="host.html">
+                <span class="hh-ico" aria-hidden="true">${GAVEL}</span>
+                <span class="hh-text"><b>Host an auction</b><small>Set up teams and players, then run the live room.</small></span>
+                <span class="hh-go" aria-hidden="true">▶</span>
+              </a>
+            </div>
+            <ul class="checks">
+              <li>Free to start</li><li>Works on any phone</li><li>No app or sign-up for teams</li>
+            </ul>
+            <a class="mine-link" href="host.html">My auctions ›</a>
+          </div>
+
+          <div class="join-card card" id="join">
+            <p class="eyebrow" style="margin:0">Got a code?</p>
+            <h2 class="join-title">Join an auction</h2>
+            <p class="hint" style="margin-top:4px">Type the 6-character code shown on the big screen.</p>
+            <label class="label" for="codeIn">Auction code</label>
+            <input id="codeIn" class="input big" maxlength="6" autocomplete="off" autocapitalize="characters" placeholder="ABC123" value="${safe(params.get("a") || "")}">
+            <button id="codeGo" class="btn btn-sun btn-block btn-lg" style="margin-top:12px">Join auction</button>
+            <p id="codeErr" class="err">${safe(message)}</p>
+            <p class="hint" style="text-align:center;margin-top:12px">Got a team link? Just open it. It signs you in to your team.</p>
+          </div>
+        </section>
+
+        <section class="l-sec">
+          <p class="eyebrow">Why BidArena</p>
+          <h2 class="l-title">Everything auction night needs</h2>
+          <div class="features">
+            <article class="feature t-green"><span class="f-ico">📱</span><h3>Join in seconds</h3><p>Each team gets a link and a 4-digit PIN. Scan the QR code and bid. Nobody needs an account.</p></article>
+            <article class="feature t-gold"><span class="f-ico">⚖️</span><h3>Fair by design</h3><p>Every bid is checked against the team's budget and squad rules, so no one can overspend or end up short.</p></article>
+            <article class="feature t-rose"><span class="f-ico">⏱️</span><h3>Real auction drama</h3><p>A shared countdown, “going once, going twice” and a hammer-down SOLD moment on the big screen.</p></article>
+            <article class="feature t-blue"><span class="f-ico">📊</span><h3>Results you keep</h3><p>Final squads, awards for the record signing and biggest spender, and a spreadsheet download.</p></article>
+          </div>
+        </section>
+
+        <section class="l-sec">
+          <p class="eyebrow">How it works</p>
+          <h2 class="l-title">Live in three steps</h2>
+          <ol class="steps">
+            <li><span class="step-n">1</span><h3>Set up the auction</h3><p>Pick the sport, set budgets and categories, add teams, and upload players from Excel or CSV.</p></li>
+            <li><span class="step-n">2</span><h3>Share the team links</h3><p>Send each team its link or QR code. Put the auction room on the big screen.</p></li>
+            <li><span class="step-n">3</span><h3>Bid live</h3><p>Players come up one by one. Teams bid from their phones until the hammer falls.</p></li>
+          </ol>
+        </section>
+
+        <section class="l-sec">
+          <p class="eyebrow">Made for your sport</p>
+          <h2 class="l-title">Detailed where it matters</h2>
+          <div class="sport-cards">
+            <article class="sport-card" style="--img:url('Images/Cricket_Banner.jpg')"><div><h3>🏏 Cricket</h3><p>Batsman, bowler, all rounder or keeper, with subtype, batting hand and bowling hand.</p></div></article>
+            <article class="sport-card" style="--img:url('Images/Football_Banner.jpg')"><div><h3>⚽ Football</h3><p>Position, sub position and preferred foot for every player.</p></div></article>
+            <article class="sport-card" style="--img:url('Images/Home_Background.jpg')"><div><h3>🏆 30+ more sports</h3><p>Kabaddi, hockey, basketball, badminton and more, with name, age and a short note.</p></div></article>
+          </div>
+        </section>
+
+        <footer class="l-foot">
+          <span class="brand-name">Bid<span>Arena</span></span>
+          <span class="muted">Live auctions for every sport</span>
+          <a class="link-btn" href="host.html">Host an auction</a>
+        </footer>`;
+      animate(view);
+      const go = async () => {
+        unlockAudio();
+        const c = $("codeIn").value.trim().toUpperCase();
+        if (c.length !== 6) { $("codeErr").textContent = "The code has 6 letters and numbers."; return; }
+        $("codeGo").disabled = true;
+        try { await openAuction(c); }
+        catch (e) { $("codeErr").textContent = "Couldn't connect. Check your internet and try again."; $("codeGo").disabled = false; }
+      };
+      $("codeGo").onclick = go;
+      $("codeIn").addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+      if (message) $("join").scrollIntoView({ block: "center" });
+    }
+
+    async function openAuction(c) {
+      me = await ensureGuest();
+      const snap = await get(ref(db, `auctions/${c}`));
+      if (!snap.exists()) { showCodeForm("No auction found with that code."); return; }
+      code = c;
+      A = snap.val();
+      applySportTheme(A.settings && A.settings.sport);
+      // A team link opens straight into that team
+      const t = params.get("t"), k = params.get("k");
+      if (t && k && A.teams && A.teams[t]) { await joinTeam(t, k); return; }
+      const mine = (await get(ref(db, `auctions/${c}/members/${me.uid}`))).val();
+      if (mine && A.teams && A.teams[mine.team]) { myTeam = mine.team; saveSeat(); listen(); return; }
+      showSeatForm();
+    }
+
+    // ============================================================
+    // Step 2: pick your team (with its PIN), or just watch
+    // ============================================================
+    async function showSeatForm(message = "") {
+      setWide(false);
+      await loadTeamLogos(code, A.teams, logos);
+      const teams = Object.entries(A.teams || {});
+      let chosen = null;
+      view.innerHTML = `
+        <div class="join-hero">
+          <h1 class="title">${safe(A.title || "Auction")}</h1>
+          <p class="lead">Are you bidding for a team?</p>
+        </div>
+        <div class="card">
+          <p class="label" style="margin-top:0">Your team</p>
+          <div class="team-pick">${teams.map(([id, t]) => `
+            <button class="team-opt" data-team="${id}">${crest(id, "sm")}${safe(t.name)}</button>`).join("")}</div>
+          <label class="label" for="pinIn">Team PIN</label>
+          <input id="pinIn" class="input big" maxlength="4" inputmode="numeric" autocomplete="off" placeholder="••••">
+          <button id="teamGo" class="btn btn-sun btn-block btn-lg" style="margin-top:12px" disabled>Choose your team</button>
+          <p id="seatErr" class="err">${safe(message)}</p>
+          <p class="hint" style="text-align:center">Your team's PIN comes from the host.</p>
+          <button id="watchGo" class="btn btn-light btn-block" style="margin-top:14px">Just watch</button>
+        </div>`;
+      animate(view);
+      view.querySelectorAll("[data-team]").forEach(b => b.onclick = () => {
+        chosen = b.dataset.team;
+        view.querySelectorAll("[data-team]").forEach(x => x.classList.toggle("on", x === b));
+        $("teamGo").disabled = false;
+        $("teamGo").textContent = `Bid for ${A.teams[chosen].name}`;
+        $("pinIn").focus();
+      });
+      const go = () => {
+        const pin = $("pinIn").value.trim();
+        if (!chosen) { $("seatErr").textContent = "Tap your team first."; return; }
+        if (!/^\d{4}$/.test(pin)) { $("seatErr").textContent = "The PIN has 4 numbers."; return; }
+        joinTeam(chosen, pin);
+      };
+      $("teamGo").onclick = go;
+      $("pinIn").addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+      $("watchGo").onclick = () => { myTeam = null; saveSeat(); listen(); };
+    }
+
+    async function joinTeam(team, pin) {
+      unlockAudio();
+      try {
+        // The database checks the PIN; a wrong one is refused
+        await set(ref(db, `auctions/${code}/members/${me.uid}`), { team, pin: String(pin), name: "Team device" });
+        myTeam = team;
+        saveSeat();
+        listen();
+      } catch (e) {
+        showSeatForm("That PIN doesn't match. Check it with the host.");
+      }
+    }
+
+    // ============================================================
+    // Live: follow the auction
+    // ============================================================
+    function listen() {
+      setWide(false);
+      history.replaceState(null, "", `?a=${code}`);
+      if (stopListen) stopListen();
+      lastKey = ""; lastSeq = -1;
+      stopListen = onValue(ref(db, `auctions/${code}`), snap => {
+        A = snap.val();
+        if (!A) { clearSeat(); showCodeForm("This auction has been closed."); return; }
+        if (myTeam && !(A.teams || {})[myTeam]) myTeam = null;
+        render();
+        loadTeamLogos(code, A.teams, logos).then(changed => { if (changed) { $("liveShell")?.remove(); lastKey = ""; render(); } });
+      });
+    }
+
+    const S = () => A.settings || {};
+    const L = () => A.live || { state: "idle" };
+    const team = () => myTeam && A.teams[myTeam];
+
+    function shell() {
+      if ($("liveShell")) return;
+      $("hostPill").hidden = false;
+      const t = team();
+      view.innerHTML = `
+        <div id="liveShell">
+          ${t ? `<div class="team-head" id="teamHead" style="--c:${safe(t.color)}">
+                  <span id="tCrest">${crest(myTeam, "lg")}</span>
+                  <div class="grow"><h2 id="tName"></h2><p>Your team · <button class="link-btn" id="editBtn">Edit name &amp; picture</button> · <button class="link-btn" id="leaveBtn">Leave</button></p>
+                    <span id="pendingTag" class="pending-tag" hidden>⏳ Change waiting for host approval</span></div></div>
+                 <div class="stats">
+                   <div class="stat"><b id="stPurse"></b><span>Left</span></div>
+                   <div class="stat"><b id="stMax"></b><span id="stMaxLabel">Max bid</span></div>
+                   <div class="stat"><b id="stSquad"></b><span>Squad</span></div>
+                 </div>
+                 <div id="myCats" class="my-cats"></div>`
+               : `<div class="team-head" style="--c:var(--accent)"><div class="grow"><h2>${safe(A.title || "Auction")}</h2><p>Watching · <button class="link-btn" id="leaveBtn">Join a team</button></p></div></div>`}
+          <div id="plot" class="plot" style="margin-top:10px"></div>
+          ${t ? `<h3 class="section-title">Your squad</h3><ul id="mySquad" class="mini-squad"></ul>
+                 <h3 class="section-title">Unsold players <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:600">· tap ♡ to wishlist (only your team sees it)</span></h3>
+                 <ul id="unsoldList" class="mini-squad"></ul>` : ""}
+          <h3 class="section-title">All teams</h3>
+          <div id="allTeams" class="board"></div>
+        </div>`;
+      animate(view);
+      if ($("editBtn")) $("editBtn").onclick = openEditTeam;
+      $("leaveBtn").onclick = () => { clearSeat(); if (stopListen) stopListen(); stopListen = null; if (stopWish) stopWish(); stopWish = null; myTeam = null; showSeatForm(); };
+      if (t && $("unsoldList")) $("unsoldList").addEventListener("click", e => { const b = e.target.closest("[data-wish]"); if (b) toggleWish(b.dataset.wish); });
+      // This team's wishlist is private: only its own members can read it
+      if (t && !stopWish) stopWish = onValue(ref(db, `auctionWish/${code}/${myTeam}`), snap => { myWish = snap.val() || {}; renderSquads(); });
+    }
+
+    const tagsHTML = p => { const t = playerTags(p, S()); return t.length ? `<p class="lot-info">${t.map(x => `<span class="tag">${safe(x)}</span>`).join("")}</p>` : ""; };
+
+    function render() {
+      applySportTheme(S().sport);
+      if (A.status === "ended") return renderFinal();
+      if (A.status !== "live") {
+        view.innerHTML = `
+          <div class="card" style="text-align:center">
+            <h2 class="title" style="font-size:30px">${safe(A.title || "Auction")}</h2>
+            <p class="lead">${team() ? `You're bidding for <b>${safe(team().name)}</b>.` : "You're watching."} Waiting for the host to start…</p>
+            <p class="hint">${Object.keys(A.players || {}).length} players · ${Object.keys(A.teams || {}).length} teams</p>
+          </div>`;
+        lastKey = "";
+        return;
+      }
+      shell();
+      renderStats();
+      renderPlot();
+      renderSquads();
+    }
+
+    function renderStats() {
+      const t = team(), s = S();
+      if (!t) return;
+      $("tName").textContent = t.name;
+      $("teamHead").style.setProperty("--c", t.color);
+      $("pendingTag").hidden = !(A.teamRequests && A.teamRequests[myTeam]);
+      const live = L(), lim = squadLimits(s);
+      $("stPurse").textContent = money(purseLeftOf(t, s), s);
+      const onLot = live.cat && ["bidding", "paused"].includes(live.state);
+      $("stMax").textContent = onLot ? money((t.maxBid && t.maxBid[live.cat]) || 0, s) : "–";
+      $("stMaxLabel").textContent = onLot ? "Max bid here" : "Max bid";
+      $("stSquad").textContent = `${t.count || 0}${lim.max < 999 ? "/" + lim.max : ""}`;
+      $("myCats").innerHTML = catList(s).map(c => {
+        const n = (t.cat && t.cat[c.id]) || 0;
+        const cls = n >= catMax(c) ? "done" : n < c.min ? "short" : "ok";
+        return `<span class="tc ${cls} ${live.cat === c.id && onLot ? "now" : ""}" style="--cc:${catColour(s, c.id)}">${safe(c.name)} ${n}/${c.min}${c.max ? "–" + c.max : "+"}</span>`;
+      }).join("");
+    }
+
+    async function photoFor(pid) {
+      if (photos[pid] !== undefined) return photos[pid];
+      const snap = await get(ref(db, `auctionPhotos/${code}/${pid}`));
+      photos[pid] = snap.exists() ? snap.val() : "";
+      return photos[pid];
+    }
+
+    function renderPlot() {
+      const live = L(), s = S(), plot = $("plot");
+      const key = `${live.pid || ""}:${live.state}`;
+      const changed = key !== lastKey;
+      if (live.state === "idle" || !live.pid || !A.players[live.pid]) {
+        if (changed) { plot.innerHTML = `<div class="idle" style="padding:40px 10px"><h2 class="title" style="font-size:26px">Waiting for the next player…</h2></div>`; animate(plot); }
+        lastKey = key; lastSeq = -1;
+        return;
+      }
+      const p = A.players[live.pid];
+      const cat = catList(s).find(c => c.id === live.cat) || { name: "" };
+      const cc = catColour(s, live.cat);
+      plot.style.setProperty("--cc", cc);
+      if (changed && (live.pid !== lastKey.split(":")[0] || !plot.querySelector(".plot-top"))) {
+        plot.innerHTML = `
+          <div class="plot-top">
+            <div class="pcard" style="--cc:${cc}"><div class="pcard-init" id="pPhoto">${safe(initials(p.name))}</div></div>
+            <div class="grow">
+              <span class="lot-cat" style="background:${cc};color:#000">${safe(cat.name)}${live.round > 1 ? " · unsold round" : ""}</span>
+              <h2 class="lot-name">${safe(p.name)}</h2>
+              ${tagsHTML(p)}
+              <p class="lot-base">Base <strong>${money(live.base, s)}</strong> · +${money(stepFor(live.cat, s), s)} a bid</p>
+            </div>
+          </div>
+          <div class="plot-bid">
+            <div><p class="bid-label" id="pLabel"></p><p class="bid-amount" id="pAmount"></p><div id="pLeader"></div></div>
+          </div>
+          <div class="timebar" id="pBar"><i></i></div>
+          <p class="time-left" id="pLeft"></p>
+          ${team() ? `
+            <button id="bidBtn" class="bid-btn">Bid</button>
+            <div class="jumps">
+              <button data-jump="2">+2 steps</button>
+              <button data-jump="5">+5 steps</button>
+            </div>
+            <p id="pStatus" class="status-line"></p>` : ""}`;
+        animate(plot);
+        photoFor(live.pid).then(src => { if (src && L().pid === live.pid && $("pPhoto")) $("pPhoto").outerHTML = `<img id="pPhoto" class="pcard-photo" src="${src}" alt="">`; });
+        if (team()) {
+          $("bidBtn").onclick = () => placeBid(1);
+          plot.querySelectorAll("[data-jump]").forEach(b => b.onclick = () => placeBid(Number(b.dataset.jump)));
+        }
+        lastSeq = -1;
+        wasLeading = false;
+      }
+
+      const leader = live.team && A.teams[live.team];
+      $("pLabel").textContent = live.team ? "Current bid" : "Opening bid";
+      const amt = $("pAmount");
+      amt.textContent = money(live.amount, s);
+      if (live.seq !== lastSeq) {
+        if (lastSeq !== -1 && live.seq > lastSeq) { amt.classList.remove("bump"); void amt.offsetWidth; amt.classList.add("bump"); }
+        lastSeq = live.seq;
+      }
+      $("pLeader").innerHTML = leader
+        ? `<span class="leader" style="border-color:${safe(leader.color)}">${crest(live.team, "sm")}${safe(leader.name)}${live.team === myTeam ? " (you)" : ""}</span>`
+        : `<span class="leader none">No bids yet</span>`;
+
+      // Outbid: buzz so they notice
+      const leadingNow = !!myTeam && live.team === myTeam;
+      if (wasLeading && !leadingNow && live.state === "bidding") {
+        sounds.outbid();
+        try { navigator.vibrate && navigator.vibrate([120, 60, 120]); } catch (e) {}
+        plot.classList.remove("outbid-flash"); void plot.offsetWidth; plot.classList.add("outbid-flash");
+      }
+      wasLeading = leadingNow;
+
+      // Sold / unsold
+      if (changed && (live.state === "sold" || live.state === "unsold")) {
+        plot.querySelector(".stamp-wrap")?.remove();
+        const wrap = document.createElement("div");
+        wrap.className = "stamp-wrap";
+        if (live.state === "sold" && leader) {
+          const mine = live.team === myTeam;
+          wrap.innerHTML = `<div class="stamp" style="--c:${safe(leader.color)};padding:18px 26px">${crest(live.team, "lg")}<div class="stamp-word" style="font-size:64px">${mine ? "YOURS!" : "SOLD!"}</div><div class="stamp-sub" style="font-size:18px">${safe(leader.name)} · ${money(live.amount, s)}</div></div>`;
+          plot.appendChild(wrap);
+          if (mine) { confetti(plot, leader.color); sounds.sold(); }
+        } else {
+          wrap.innerHTML = `<div class="stamp unsold" style="padding:18px 26px"><div class="stamp-word" style="font-size:56px">UNSOLD</div></div>`;
+          plot.appendChild(wrap);
+        }
+      }
+      if (live.state === "bidding" || live.state === "paused") plot.querySelector(".stamp-wrap")?.remove();
+      lastKey = key;
+      tick();
+    }
+
+    // Why the bid button is (or isn't) available right now
+    function bidState(jump = 1) {
+      const live = L(), s = S(), t = team();
+      if (!t) return { ok: false };
+      let amount = nextBid(live, s);
+      for (let k = 1; k < jump; k++) amount += stepFor(live.cat, s);
+      if (live.state === "paused") return { ok: false, why: "Paused by the host", amount };
+      if (live.state !== "bidding") return { ok: false, why: "", amount };
+      if (endsAt(live) - serverNow() <= 0) return { ok: false, why: "Time's up", amount };
+      if (live.team === myTeam) return { ok: false, leading: true, why: "You're the highest bidder", amount };
+      const cat = catList(s).find(c => c.id === live.cat);
+      if ((t.count || 0) >= squadLimits(s).max) return { ok: false, why: "Your squad is full", amount };
+      if (cat && ((t.cat && t.cat[cat.id]) || 0) >= catMax(cat)) return { ok: false, why: `You already have the most ${cat.name} allowed`, amount };
+      const mb = (t.maxBid && t.maxBid[live.cat]) || 0;
+      if (amount > mb) return { ok: false, why: mb ? `Your max bid here is ${money(mb, s)} (money is kept for your other minimums)` : "You can't afford this and still meet your minimums", amount };
+      return { ok: true, amount };
+    }
+
+    function tick() {
+      const live = L(), s = S();
+      const bar = $("pBar");
+      if (!bar || !live.timerMs) return;
+      let left = live.state === "paused" ? (live.pausedLeft || 0) : Math.max(0, endsAt(live) - serverNow());
+      if (!["bidding", "paused"].includes(live.state)) left = 0;
+      bar.querySelector("i").style.width = `${Math.max(0, Math.min(1, left / live.timerMs)) * 100}%`;
+      const secs = Math.ceil(left / 1000);
+      bar.classList.toggle("low", live.state === "bidding" && secs <= 5);
+      $("pLeft").textContent = live.state === "paused" ? "Paused" : live.state === "bidding" ? `${secs}s left` : "";
+      const going = live.state === "bidding" && live.team ? (secs <= 2 && secs > 0 ? "twice" : secs <= 4 && secs > 2 ? "once" : "") : "";
+      if (going !== lastGoing) {
+        lastGoing = going;
+        $("plot").querySelector(".going")?.remove();
+        if (going) {
+          const g = document.createElement("div");
+          g.className = `going ${going}`;
+          g.textContent = going === "once" ? "Going once…" : "Going twice…";
+          $("plot").appendChild(g);
+          if (myTeam && live.team !== myTeam) { try { navigator.vibrate && navigator.vibrate(60); } catch (e) {} }
+        }
+      }
+      if (!team() || !$("bidBtn")) return;
+      const st = bidState(1);
+      const btn = $("bidBtn");
+      btn.disabled = !st.ok;
+      btn.classList.toggle("leading", !!st.leading);
+      btn.innerHTML = st.leading ? "You're leading ✓" : st.amount ? `Bid ${money(st.amount, s)}<small>${live.team ? `+${money(stepFor(live.cat, s), s)}` : "Opening bid"}</small>` : "Bid";
+      $("pStatus").textContent = st.ok ? "" : st.why || "";
+      $("pStatus").className = `status-line ${st.leading ? "good" : st.why ? "bad" : ""}`;
+      document.querySelectorAll("[data-jump]").forEach(b => {
+        const j = bidState(Number(b.dataset.jump));
+        b.disabled = !j.ok;
+        b.textContent = j.amount ? `${money(j.amount, s)}` : `+${b.dataset.jump} steps`;
+      });
+    }
+    setInterval(() => { if (A && A.status === "live") tick(); }, 200);
+
+    async function placeBid(jump) {
+      const st = bidState(jump);
+      if (!st.ok) return;
+      unlockAudio();
+      const live = L();
+      const btn = $("bidBtn");
+      btn.disabled = true;
+      const key = push(ref(db, `auctions/${code}/bids/${live.pid}`)).key;
+      try {
+        // The database accepts only one bid per step, so if two teams tap at once only the first counts
+        await update(ref(db), {
+          [`auctions/${code}/live`]: {
+            pid: live.pid, cat: live.cat, round: live.round || 1, state: "bidding", base: live.base, amount: st.amount, team: myTeam,
+            seq: (live.seq || 0) + 1, timerMs: live.timerMs, clockFrom: serverTimestamp()
+          },
+          [`auctions/${code}/bids/${live.pid}/${key}`]: { team: myTeam, amount: st.amount, at: serverTimestamp() }
+        });
+        sounds.bid();
+        try { navigator.vibrate && navigator.vibrate(40); } catch (e) {}
+      } catch (e) {
+        $("pStatus").textContent = "Someone else bid first. Check the new price and try again.";
+        $("pStatus").className = "status-line bad";
+      }
+      tick();
+    }
+
+    function renderSquads() {
+      const s = S();
+      const players = Object.entries(A.players || {});
+      if (team() && $("mySquad")) {
+        const cats = catList(s);
+        const catName = id => (cats.find(c => c.id === id) || { name: "" }).name;
+        const mine = players.filter(([, p]) => p.status === "sold" && p.soldTo === myTeam);
+        $("mySquad").innerHTML = mine.map(([, p]) => `<li><span>${safe(p.name)} <span class="muted" style="font-size:13px">${safe(catName(p.cat))}</span></span><b>${money(p.price, s)}</b></li>`).join("")
+          || `<li><span class="muted">No players yet</span><span></span></li>`;
+        const unsold = players.filter(([, p]) => p.status === "unsold");
+        if ($("unsoldList")) $("unsoldList").innerHTML = unsold.map(([id, p]) => `
+          <li><span>${safe(p.name)} <span class="muted" style="font-size:13px">${safe(catName(p.cat))}</span>${playerLine(p, s) ? `<br><small class="muted">${safe(playerLine(p, s))}</small>` : ""}</span>
+            <button class="wish-btn ${myWish[id] ? "on" : ""}" data-wish="${id}" aria-label="${myWish[id] ? "Remove from" : "Add to"} wishlist">${myWish[id] ? "♥" : "♡"}</button></li>`).join("")
+          || `<li><span class="muted">No unsold players right now</span><span></span></li>`;
+      }
+      const live = L();
+      $("allTeams").innerHTML = Object.entries(A.teams || {}).map(([id, t]) => `
+        <div class="trow ${live.team === id && live.state === "bidding" ? "leading" : ""}" style="--c:${safe(t.color)}">
+          ${crest(id)}
+          <div><div class="tname">${safe(t.name)}${id === myTeam ? " (you)" : ""}</div><div class="tmeta">${t.count || 0} player${t.count === 1 ? "" : "s"}</div></div>
+          <div class="tpurse">${money(purseLeftOf(t, s), s)}<small>left</small></div>
+        </div>`).join("");
+    }
+
+    function openEditTeam() {
+      const t = team();
+      if (!t) return;
+      let logo = "";
+      const back = document.createElement("div");
+      back.className = "modal-back";
+      back.innerHTML = `<section class="card modal">
+          <button class="icon-btn modal-x" aria-label="Close">✕</button>
+          <h2 class="title" style="font-size:34px">Your <span>team</span></h2>
+          <p class="hint">Changes show everywhere once the host approves them.</p>
+          <div class="row" style="margin-top:14px">
+            <label class="crest-edit" id="crestPick" title="Choose a picture">${crest(myTeam, "xl")}<input type="file" accept="image/*" id="logoIn" hidden></label>
+            <div class="grow"><label class="label" for="nameIn" style="margin-top:0">Team name</label>
+              <input id="nameIn" class="input" maxlength="24" value="${safe(t.name)}"></div>
+          </div>
+          <button id="sendReq" class="btn btn-sun btn-block btn-lg" style="margin-top:16px">Send to host for approval</button>
+          <p id="reqErr" class="err"></p>
+        </section>`;
+      document.body.appendChild(back);
+      back.addEventListener("click", e => { if (e.target === back || e.target.closest(".modal-x")) back.remove(); });
+      back.querySelector("#logoIn").onchange = async e => {
+        const f = e.target.files[0];
+        if (!f) return;
+        try {
+          logo = await compressPhoto(f, 240);
+          back.querySelector("#crestPick .crest").innerHTML = `<img src="${logo}" alt="">`;
+        } catch (err) { back.querySelector("#reqErr").textContent = "That picture couldn't be used."; }
+      };
+      back.querySelector("#sendReq").onclick = async () => {
+        const name = back.querySelector("#nameIn").value.trim().replace(/\s+/g, " ");
+        if (!name) { back.querySelector("#reqErr").textContent = "Give your team a name."; return; }
+        if (name === t.name && !logo) { back.remove(); return; }
+        const req = { by: me.uid, at: serverTimestamp() };
+        if (name !== t.name) req.name = name;
+        if (logo) req.logo = logo;
+        try {
+          await set(ref(db, `auctions/${code}/teamRequests/${myTeam}`), req);
+          back.remove();
+          toast("Sent! Waiting for the host to approve.");
+        } catch (err) { back.querySelector("#reqErr").textContent = "Couldn't send. Try a smaller picture."; }
+      };
+    }
+
+    function toast(text) {
+      const d = document.createElement("div");
+      d.className = "toast";
+      d.textContent = text;
+      document.body.appendChild(d);
+      setTimeout(() => d.remove(), 2600);
+    }
+
+    async function toggleWish(pid) {
+      const on = !myWish[pid];
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const count = (await get(ref(db, `auctions/${code}/wishCount/${pid}`))).val() || 0;
+        try {
+          await update(ref(db), {
+            [`auctionWish/${code}/${myTeam}/${pid}`]: on ? true : null,
+            [`auctions/${code}/wishCount/${pid}`]: Math.max(0, count + (on ? 1 : -1))
+          });
+          return;
+        } catch (e) { /* another team changed the count at the same moment: try again */ }
+      }
+    }
+
+    function renderFinal() {
+      const s = S();
+      const players = Object.entries(A.players || {});
+      const teams = Object.entries(A.teams || {}).sort((a, b) => (a[0] === myTeam ? -1 : b[0] === myTeam ? 1 : 0));
+      view.innerHTML = `
+        <h1 class="title" style="margin-bottom:6px">Squads <span>revealed</span></h1>
+        <p class="lead" style="margin-bottom:14px">${safe(A.title || "Auction")} has finished.</p>
+        <div class="results-grid">${teams.map(([id, t]) => {
+          const mine = players.filter(([, p]) => p.status === "sold" && p.soldTo === id);
+          return `<div class="squad" style="--c:${safe(t.color)}">
+            <div class="squad-head">${crest(id, "lg")}<div><h3>${safe(t.name)}${id === myTeam ? " (you)" : ""}</h3><span class="muted">${mine.length} player${mine.length === 1 ? "" : "s"} · spent ${money(t.spent || 0, s)}</span></div></div>
+            <ul>${mine.map(([, p]) => `<li><span>${safe(p.name)}<span class="cat">${safe((catList(s).find(c => c.id === p.cat) || { name: "" }).name)}</span></span><span>${money(p.price, s)}</span></li>`).join("") || `<li><span class="muted">No players</span><span></span></li>`}</ul>
+          </div>`;
+        }).join("")}</div>`;
+      animate(view);
+      lastKey = "";
+    }
+
+    // ============================================================
+    // Start: resume a saved seat, or ask for the code
+    // ============================================================
+    (async () => {
+      const a = (params.get("a") || "").toUpperCase();
+      let saved = null;
+      try { saved = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
+      if (a) {
+        try { await openAuction(a); } catch (e) { showCodeForm("Couldn't connect. Check your internet and try again."); }
+        return;
+      }
+      if (saved && saved.code) {
+        try {
+          me = await ensureGuest();
+          const snap = await get(ref(db, `auctions/${saved.code}`));
+          if (snap.exists()) { code = saved.code; A = snap.val(); myTeam = saved.team && A.teams && A.teams[saved.team] ? saved.team : null; listen(); return; }
+        } catch (e) {}
+        clearSeat();
+      }
+      showCodeForm();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My auctions · BidArena</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body data-sport="home">
+  <main class="wrap">
+    <div class="topbar"><span id="brandSlot"></span><span id="who" class="who"></span></div>
+
+    <!-- Sign in -->
+    <section id="gate" class="card narrow" hidden>
+      <p class="eyebrow" style="margin:0">Host an auction</p>
+      <h1 class="title" style="margin-top:6px">Sign in to start</h1>
+      <p class="lead">Your auctions are saved to your Google account. Teams and viewers never need an account.</p>
+      <button id="signInBtn" class="btn btn-sun btn-block btn-lg" style="margin-top:18px">Sign in with Google</button>
+      <p id="gateErr" class="err"></p>
+      <a class="mine-link" href="index.html" style="margin-top:14px">Join an auction instead ›</a>
+    </section>
+
+    <!-- My auctions -->
+    <section id="listView" hidden>
+      <header class="page-head">
+        <div class="grow">
+          <h1 class="title">My auctions</h1>
+          <p class="lead">Player auctions for any sport: set the rules, add teams and players, then run the live room. Saved to your Google account, so you can host from any computer.</p>
+          <a class="mine-link" href="index.html">Join an auction instead ›</a>
+        </div>
+        <button id="newBtn" class="btn btn-sun btn-lg">+ New auction</button>
+      </header>
+      <div class="card"><ul id="auctionList" class="list"></ul></div>
+    </section>
+
+    <!-- Setting up one auction -->
+    <section id="editView" hidden>
+      <div class="ed-top">
+        <button id="backBtn" class="icon-btn" aria-label="Back to my auctions">‹</button>
+        <input id="titleInput" class="ed-title" maxlength="60" placeholder="Name your auction" aria-label="Auction name">
+        <span id="sportTag" class="sport-tag"></span>
+        <span id="statusPill" class="pill setup">Setup</span>
+        <button id="readyChip" class="ready-chip"></button>
+        <span id="saveNote" class="save-note"></span>
+        <a id="roomBtn" class="btn btn-sun">Open auction room ▶</a>
+      </div>
+      <p id="editErr" class="err"></p>
+
+      <div class="tabs" role="tablist">
+        <button class="tab on" data-tab="basics"><span class="step">1</span>Basics</button>
+        <button class="tab" data-tab="cats"><span class="step">2</span>Categories <span id="catCount" class="count"></span></button>
+        <button class="tab" data-tab="teams"><span class="step">3</span>Teams <span id="teamCount" class="count"></span></button>
+        <button class="tab" data-tab="players"><span class="step">4</span>Players <span id="playerCount" class="count"></span></button>
+        <button class="tab" data-tab="share"><span class="step">5</span>Share</button>
+      </div>
+
+      <div id="pane-basics" class="pane"></div>
+      <div id="pane-cats" class="pane" hidden></div>
+      <div id="pane-teams" class="pane" hidden></div>
+      <div id="pane-players" class="pane" hidden></div>
+      <div id="pane-share" class="pane" hidden></div>
+    </section>
+  </main>
+
+  <script type="module">
+    import {
+      db, ref, get, set, update, serverTimestamp, currentUser, isHostAccount, signInHost, signOutUser,
+      safe, animate, makeCode, makePin, newId, TEAM_COLOURS, DEFAULT_SETTINGS, money,
+      compressPhoto, parseTable, toCSV, downloadCSV, brandHTML, catList, catMax, squadLimits, squadText, cheapestSquad, setupProblems,
+      MIN_TEAMS, MAX_TEAMS, MAX_CATS, UNSOLD_RULES, SQUAD_MODES,
+      catColour, crestHTML, loadTeamLogos, logoOf,
+      CURRENCIES, SPORTS, sportOf, sportName, sportIcon, schemaFor, sportDefaults, applySportTheme, mountSportPicker,
+      readSheetFile, norm, matchRole, matchSub, matchHand, cleanAge,
+      dialog, alertBox, confirmBox, copyText, teamBudget, allMaxBids
+    } from "./app.js";
+
+    document.getElementById("brandSlot").innerHTML = brandHTML("Auction setup");
+
+    const $ = id => document.getElementById(id);
+    let user = null;
+    let code = null;           // auction being edited
+    let A = null;              // its data
+    let pins = {};             // team PINs (private to the host)
+    let shared = {};           // teams whose link the host has copied
+    const logos = {};          // team pictures
+    let tab = "basics";
+
+    const views = ["gate", "listView", "editView"];
+    const show = id => views.forEach(v => { $(v).hidden = v !== id; if (v === id) animate($(v)); });
+    const locked = () => A && A.status !== "setup";    // once live, money rules can't change
+
+    // A toned section: colour, icon, title, one-line description, body
+    const sec = (tone, icon, title, desc, body, right = "", id = "") => `
+      <section class="sec t-${tone}" ${id ? `id="${id}"` : ""}>
+        <div class="sec-head"><span class="sec-ico" aria-hidden="true">${icon}</span>
+          <div class="grow"><h3>${title}</h3>${desc ? `<p>${desc}</p>` : ""}</div>${right}</div>
+        ${body}
+      </section>`;
+
+    // ============================================================
+    // Sign in
+    // ============================================================
+    async function start() {
+      user = await currentUser();
+      if (!isHostAccount(user)) {
+        show("gate");
+        $("signInBtn").onclick = async () => {
+          try { user = await signInHost(); start(); }
+          catch (e) {
+            const c = (e && e.code) || "";
+            $("gateErr").textContent = c === "auth/unauthorized-domain"
+              ? "This web address isn't allowed yet. Add it in Firebase under Authentication → Settings → Authorized domains."
+              : c === "auth/popup-closed-by-user" ? "Sign-in was cancelled." : `Couldn't sign in (${c || "unknown error"}).`;
+          }
+        };
+        return;
+      }
+      $("who").innerHTML = `${safe(user.displayName || user.email)} · <button class="link-btn" id="outBtn">Sign out</button>`;
+      $("outBtn").onclick = async () => { await signOutUser(); location.href = "host.html"; };
+      const want = new URLSearchParams(location.search).get("a");
+      if (want) openAuction(want); else showList();
+    }
+
+    // ============================================================
+    // My auctions
+    // ============================================================
+    async function showList() {
+      code = null; A = null;
+      applySportTheme(null);
+      history.replaceState(null, "", "host.html");
+      show("listView");
+      const list = $("auctionList");
+      list.innerHTML = `<li class="empty">Loading…</li>`;
+      const mine = (await get(ref(db, `auctionsByOwner/${user.uid}`))).val() || {};
+      const rows = Object.entries(mine).sort((a, b) => (b[1].createdAt || 0) - (a[1].createdAt || 0));
+      list.innerHTML = rows.length ? rows.map(([c, m]) => `
+        <li class="list-item">
+          <span class="list-ico" title="${safe(sportName(m.sport))}">${sportIcon(m.sport)}</span>
+          <div class="grow">
+            <p class="list-title">${safe(m.title || "Untitled auction")} <span class="pill ${m.status || "setup"}">${m.status === "live" ? "Live" : m.status === "ended" ? "Finished" : "Setup"}</span></p>
+            <p>${safe(m.sport ? sportName(m.sport) : "Sport not set")} · code <b>${c}</b>${m.createdAt ? ` · created ${new Date(m.createdAt).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })}` : ""}</p>
+          </div>
+          <a class="btn btn-sun" href="room.html?a=${c}">${m.status === "ended" ? "Results" : "Room ▶"}</a>
+          <button class="btn btn-light" data-edit="${c}">Set up</button>
+          <button class="icon-btn" data-del="${c}" title="Delete" aria-label="Delete auction">✕</button>
+        </li>`).join("") : `<li class="empty">No auctions yet. Press <b>+ New auction</b> to set one up.</li>`;
+    }
+
+    $("auctionList").addEventListener("click", async e => {
+      const ed = e.target.closest("[data-edit]"), del = e.target.closest("[data-del]");
+      if (ed) openAuction(ed.dataset.edit);
+      if (del) {
+        if (!await confirmBox("Delete this auction?", "The auction, its players and all results are removed. This can't be undone.", { ok: "Delete auction", danger: true })) return;
+        const c = del.dataset.del;
+        await update(ref(db), {
+          [`auctions/${c}`]: null, [`auctionSecrets/${c}`]: null,
+          [`auctionPhotos/${c}`]: null, [`auctionsByOwner/${user.uid}/${c}`]: null
+        });
+        showList();
+      }
+    });
+
+    // ---------- new auction: the sport comes first ----------
+    $("newBtn").onclick = () => {
+      let sport = "";
+      const back = document.createElement("div");
+      back.className = "modal-back";
+      back.innerHTML = `<section class="card modal" style="max-width:520px">
+          <button class="icon-btn modal-x" aria-label="Close">✕</button>
+          <h2 class="title" style="font-size:40px">New auction</h2>
+          <p class="hint">The sport decides what you record about each player and the look of every screen.</p>
+          <label class="label">Sport</label>
+          <div id="nSport"></div>
+          <label class="label" for="nTitle">Auction name</label>
+          <input id="nTitle" class="input" maxlength="60" placeholder="e.g. Office Premier League 2026">
+          <label class="label" for="nCur">Currency</label>
+          <select id="nCur" class="select">${Object.entries(CURRENCIES).map(([k, c]) => `<option value="${k}" ${k === "BDT" ? "selected" : ""}>${safe(c.name)} · ${safe(c.unit)}</option>`).join("")}</select>
+          <button id="nGo" class="btn btn-sun btn-block btn-lg" style="margin-top:18px">Create auction</button>
+          <p id="nErr" class="err"></p>
+        </section>`;
+      document.body.appendChild(back);
+      const close = () => { back.remove(); applySportTheme(null); };
+      back.addEventListener("click", e => { if (e.target === back || e.target.closest(".modal-x")) close(); });
+      mountSportPicker(back.querySelector("#nSport"), "", id => {
+        sport = id;
+        applySportTheme(id);
+        back.querySelector("#nTitle").placeholder = `e.g. ${sportName(id)} auction 2026`;
+        back.querySelector("#nErr").textContent = "";
+      });
+      back.querySelector("#nGo").onclick = async () => {
+        if (!sport) { back.querySelector("#nErr").textContent = "Choose the sport first."; return; }
+        const btn = back.querySelector("#nGo");
+        btn.disabled = true;
+        const title = back.querySelector("#nTitle").value.trim() || `${sportName(sport)} auction`;
+        const cur = back.querySelector("#nCur").value;
+        try {
+          let c;
+          for (let i = 0; i < 20; i++) { c = makeCode(6); if (!(await get(ref(db, `auctions/${c}/owner`))).exists()) break; }
+          const teams = {}, teamPins = {};
+          ["Team A", "Team B"].forEach((name, k) => { const id = newId(); teams[id] = { name, color: TEAM_COLOURS[k] }; teamPins[id] = makePin(); });
+          const settings = {
+            ...JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), ...sportDefaults(sport),
+            sport, currency: cur, unit: CURRENCIES[cur].unit, unitAfter: CURRENCIES[cur].after
+          };
+          await set(ref(db, `auctions/${c}`), { owner: user.uid, title, status: "setup", createdAt: serverTimestamp(), settings, teams });
+          await set(ref(db, `auctionSecrets/${c}`), { teamPins });
+          await set(ref(db, `auctionsByOwner/${user.uid}/${c}`), { title, sport, status: "setup", createdAt: serverTimestamp() });
+          back.remove();
+          openAuction(c);
+        } catch (e) {
+          back.querySelector("#nErr").textContent = `Couldn't create the auction. Check that the database rules are published. (${e.message})`;
+          btn.disabled = false;
+        }
+      };
+    };
+
+    // ============================================================
+    // Set up one auction
+    // ============================================================
+    async function openAuction(c) {
+      const [snap, sec2] = await Promise.all([get(ref(db, `auctions/${c}`)), get(ref(db, `auctionSecrets/${c}`))]);
+      const data = snap.val();
+      if (!data || data.owner !== user.uid) { await alertBox("Auction not found", "That auction isn't in your account.", "🔍"); showList(); return; }
+      code = c;
+      A = data;
+      A.settings = Object.assign(JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), A.settings || {});
+      if (!A.settings.cats || !Object.keys(A.settings.cats).length) A.settings.cats = sportDefaults(A.settings.sport).cats;
+      if (!CURRENCIES[A.settings.currency]) A.settings.currency = { "$": "USD", "£": "GBP", "pts": "PTS" }[A.settings.unit] || "BDT";
+      A.teams = A.teams || {};
+      A.players = A.players || {};
+      pins = (sec2.val() && sec2.val().teamPins) || {};
+      shared = (sec2.val() && sec2.val().shared) || {};
+      await loadTeamLogos(c, A.teams, logos);
+      history.replaceState(null, "", `host.html?a=${c}`);
+      $("titleInput").value = A.title || "";
+      $("roomBtn").href = `room.html?a=${c}`;
+      const st = A.status || "setup";
+      $("statusPill").className = `pill ${st}`;
+      $("statusPill").textContent = st === "live" ? "Live" : st === "ended" ? "Finished" : "Setup";
+      $("roomBtn").textContent = st === "ended" ? "See results ▶" : "Open auction room ▶";
+      show("editView");
+      showTab("basics");
+    }
+
+    $("backBtn").onclick = showList;
+
+    // ---------- saving (a moment after typing stops) ----------
+    const timers = {};
+    function saveLater(key, fn, wait = 500) {
+      $("saveNote").textContent = "Saving…";
+      clearTimeout(timers[key]);
+      timers[key] = setTimeout(async () => {
+        try { await fn(); $("saveNote").textContent = "Saved"; $("editErr").textContent = ""; }
+        catch (e) { $("saveNote").textContent = "Couldn't save"; $("editErr").textContent = e.message; }
+      }, wait);
+    }
+    function saveSettings() {
+      const s = A.settings;
+      catList(s).forEach((c, k) => { s.cats[c.id].order = k + 1; });
+      saveLater("settings", () => set(ref(db, `auctions/${code}/settings`), s));
+      updateTop();
+    }
+
+    $("titleInput").addEventListener("input", () => {
+      A.title = $("titleInput").value;
+      const t = A.title.trim() || "Untitled auction";
+      saveLater("title", () => update(ref(db), { [`auctions/${code}/title`]: t, [`auctionsByOwner/${user.uid}/${code}/title`]: t }));
+    });
+
+    // ---------- the bar at the top: sport, readiness, counts ----------
+    function updateTop() {
+      const s = A.settings;
+      applySportTheme(s.sport);
+      $("sportTag").innerHTML = `${sportIcon(s.sport)} ${safe(s.sport ? sportName(s.sport) : "Sport not set")}`;
+      const problems = setupProblems(s, A.teams, A.players);
+      const chip = $("readyChip");
+      chip.className = `ready-chip ${problems.length ? "bad" : "ok"}`;
+      chip.textContent = locked() ? "Auction started" : problems.length ? `${problems.length} to fix` : "Ready to start ✓";
+      $("catCount").textContent = catList(s).length;
+      $("playerCount").textContent = Object.keys(A.players).length;
+      const reqs = Object.keys(A.teamRequests || {}).filter(id => A.teams[id]).length;
+      $("teamCount").innerHTML = `${Object.keys(A.teams).length}${reqs ? `<span class="badge">${reqs}</span>` : ""}`;
+      if ($("readiness")) $("readiness").outerHTML = readinessHTML();
+      const cheap = cheapestSquad(s);
+      const hint = `Each team buys ${squadText(s)} players. The cheapest legal squad costs <b>${isFinite(cheap) ? money(cheap, s) : "–"}</b> at base prices${isFinite(cheap) && s.purse ? `, leaving <b>${money(s.purse - cheap, s)}</b> to compete with` : ""}.`;
+      document.querySelectorAll("[data-cheap]").forEach(el => { el.innerHTML = hint; });
+    }
+    $("readyChip").onclick = () => { showTab("basics"); setTimeout(() => $("readiness")?.scrollIntoView({ behavior: "smooth", block: "center" }), 50); };
+
+    function readinessHTML() {
+      const problems = setupProblems(A.settings, A.teams, A.players);
+      return sec("rose", "✅", "Before you start", "Everything the auction needs to run fairly.",
+        problems.length ? `<div class="problems"><b>${problems.length} thing${problems.length === 1 ? "" : "s"} to fix:</b><ul>${problems.map(p => `<li>${safe(p)}</li>`).join("")}</ul></div>`
+                        : `<div class="all-good">All set. Open the auction room to start.</div>`, "", "readiness");
+    }
+
+    // ---------- tabs ----------
+    function showTab(name) {
+      tab = name;
+      document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === name));
+      document.querySelectorAll(".pane").forEach(p => { p.hidden = p.id !== `pane-${name}`; });
+      ({ basics: renderBasics, cats: renderCats, teams: renderTeams, players: renderPlayers, share: renderShare })[name]();
+      updateTop();
+      animate($(`pane-${name}`));
+    }
+    document.querySelectorAll(".tab").forEach(t => { t.onclick = () => showTab(t.dataset.tab); });
+
+    // ============================================================
+    // 1 · Basics: sport, money, squad size, bidding
+    // ============================================================
+    function renderBasics() {
+      const s = A.settings;
+      const dis = locked() ? "disabled" : "";
+      const cur = CURRENCIES[s.currency] || CURRENCIES.BDT;
+      $("pane-basics").innerHTML = `
+        ${locked() ? `<p class="hint" style="margin:0 0 12px"><b>The auction has started</b>, so the sport, money and squad rules are fixed.</p>` : ""}
+        <div class="sec-cols">
+          ${sec("green", sportIcon(s.sport), "Sport", "Sets the player details you record and the background on every screen.",
+            `<div id="sportPick"></div>
+             <p class="hint">${s.sport === "cricket" ? "Players get type, subtype, batting hand and bowling hand."
+               : s.sport === "football" ? "Players get position, sub position and preferred foot."
+               : s.sport ? "Players get name, age and a short info line." : "Pick the sport to continue."}</p>`)}
+          ${sec("gold", "💰", "Money", "What teams spend and how it's shown.",
+            `<div class="grid2">
+               <div><label class="label" for="sCurrency">Currency</label>
+                 <select id="sCurrency" class="select" ${dis}>${Object.entries(CURRENCIES).map(([k, c]) => `<option value="${k}" ${s.currency === k ? "selected" : ""}>${safe(c.name)}</option>`).join("")}</select></div>
+               <div><label class="label" for="sPurse">Default budget per team</label>
+                 <div class="prefix"><span id="unitMark">${safe(cur.unit)}</span><input id="sPurse" class="input" type="number" min="1" step="1" value="${s.purse}" ${dis}></div></div>
+             </div>
+             <p class="hint">Shown as <b id="moneyEg">${money(12500, s)}</b>. Every team starts with this budget. To give one team a different budget, change it in <button class="link-btn" data-goto="teams">Teams</button>.</p>`)}
+        </div>
+        <div class="sec-cols" style="margin-top:14px">
+          ${sec("blue", "👥", "Squad size", "How many players each team must end up with.",
+            `<div class="row squad-row">
+               <select id="sMode" class="select" style="max-width:150px" ${dis}>
+                 ${Object.entries(SQUAD_MODES).map(([k, v]) => `<option value="${k}" ${s.squadMode === k ? "selected" : ""}>${v}</option>`).join("")}
+               </select>
+               ${s.squadMode === "max" ? "" : `<input id="sMin" class="input" type="number" min="0" style="max-width:90px" value="${s.squadMin}" ${dis} aria-label="Squad minimum">`}
+               ${s.squadMode === "range" ? `<span class="muted">and</span>` : ""}
+               ${s.squadMode === "range" || s.squadMode === "max" ? `<input id="sMax" class="input" type="number" min="1" style="max-width:90px" value="${s.squadMax}" ${dis} aria-label="Squad maximum">` : ""}
+               <span class="muted">players</span>
+             </div>
+             <p class="hint" data-cheap></p>`)}
+          ${sec("purple", "⏱️", "Bidding", "The clock and the running order.",
+            `<div class="grid2">
+               <div><label class="label" for="sTimer">Bid timer</label>
+                 <select id="sTimer" class="select">${[10, 15, 20, 30, 45, 60].map(t => `<option value="${t}" ${s.timerSec === t ? "selected" : ""}>${t} seconds</option>`).join("")}</select></div>
+               <div><label class="label" for="sOrder">Order within a category</label>
+                 <select id="sOrder" class="select" ${dis}>
+                   <option value="listed" ${s.order !== "random" ? "selected" : ""}>As listed</option>
+                   <option value="random" ${s.order === "random" ? "selected" : ""}>Random draw at start</option>
+                 </select></div>
+             </div>
+             <p class="hint">The timer restarts after every bid. When it runs out, the player is sold.</p>`)}
+        </div>
+        <div style="margin-top:14px">${readinessHTML()}</div>`;
+      mountSportPicker($("sportPick"), s.sport, changeSport, { disabled: locked() });
+    }
+
+    async function changeSport(id) {
+      const s = A.settings, prev = s.sport;
+      if (id === prev || locked()) return;
+      const prevCats = prev ? sportDefaults(prev).cats : DEFAULT_SETTINGS.cats;
+      const untouched = catList(s).map(c => c.name).join("|") === catList({ cats: prevCats }).map(c => c.name).join("|");
+      const replace = untouched || await dialog({
+        title: `Switch to ${sportName(id)}`, icon: sportIcon(id),
+        message: `Use the standard ${sportName(id)} categories and squad size, or keep the categories you already set up?`,
+        buttons: [{ label: "Keep my categories", value: false, kind: "light" }, { label: "Use standard", value: true, kind: "sun" }], dismiss: false
+      });
+      s.sport = id;
+      if (replace) {
+        const d = sportDefaults(id);
+        Object.assign(s, { squadMode: d.squadMode, squadMin: d.squadMin, squadMax: d.squadMax, cats: d.cats });
+        // players whose category disappeared: re-home them by their type if possible
+        Object.values(A.players).forEach(p => { if (!s.cats[p.cat]) p.cat = s.cats[p.role] ? p.role : ""; });
+        const changes = {};
+        Object.entries(A.players).forEach(([pid, p]) => { changes[`auctions/${code}/players/${pid}/cat`] = p.cat || null; });
+        if (Object.keys(changes).length) await update(ref(db), changes);
+      }
+      await update(ref(db), { [`auctions/${code}/settings`]: s, [`auctionsByOwner/${user.uid}/${code}/sport`]: id });
+      $("saveNote").textContent = "Saved";
+      renderBasics();
+      updateTop();
+    }
+
+    $("pane-basics").addEventListener("click", e => { const g = e.target.closest("[data-goto]"); if (g) showTab(g.dataset.goto); });
+    $("pane-basics").addEventListener("input", e => {
+      const t = e.target, s = A.settings;
+      const num = (v, min) => Math.max(min, Math.round(Number(v) || 0));
+      if (t.id === "sPurse") s.purse = num(t.value, 1);
+      else if (t.id === "sMin") s.squadMin = num(t.value, 0);
+      else if (t.id === "sMax") s.squadMax = num(t.value, 1);
+      else return;
+      saveSettings();
+    });
+    $("pane-basics").addEventListener("change", e => {
+      const t = e.target, s = A.settings;
+      if (t.id === "sCurrency") {
+        const c = CURRENCIES[t.value];
+        Object.assign(s, { currency: t.value, unit: c.unit, unitAfter: c.after });
+        $("unitMark").textContent = c.unit;
+        $("moneyEg").textContent = money(12500, s);
+      }
+      else if (t.id === "sTimer") s.timerSec = Number(t.value);
+      else if (t.id === "sOrder") s.order = t.value;
+      else if (t.id === "sMode") { s.squadMode = t.value; saveSettings(); renderBasics(); return; }
+      else return;
+      saveSettings();
+    });
+
+    // ============================================================
+    // 2 · Categories
+    // ============================================================
+    function renderCats() {
+      const s = A.settings, cats = catList(s), dis = locked() ? "disabled" : "";
+      $("pane-cats").innerHTML =
+        sec("teal", "🗂️", `Auction categories <span class="muted" style="font-size:18px">${cats.length} of ${MAX_CATS}</span>`,
+          "Players are auctioned category by category, in this order. Each has its own limits, base price and bid step.",
+          `<p class="hint" data-cheap style="margin:0 0 6px"></p>
+           <div class="cat-list">
+            ${cats.map((c, k) => `
+              <div class="cat-card" style="--cc:${catColour(s, c.id)}">
+                <div class="cat-head">
+                  <span class="cat-num">${k + 1}</span>
+                  <input class="input" data-cf="name" data-cid="${c.id}" maxlength="24" value="${safe(c.name)}" aria-label="Category name" ${dis}>
+                  <div class="row" style="gap:6px;flex-wrap:nowrap">
+                    <button class="icon-btn" data-cmove="-1" data-cid="${c.id}" ${k === 0 || locked() ? "disabled" : ""} aria-label="Move up">↑</button>
+                    <button class="icon-btn" data-cmove="1" data-cid="${c.id}" ${k === cats.length - 1 || locked() ? "disabled" : ""} aria-label="Move down">↓</button>
+                    <button class="icon-btn" data-cdel="${c.id}" ${cats.length <= 1 || locked() ? "disabled" : ""} aria-label="Delete category">✕</button>
+                  </div>
+                </div>
+                <div class="cat-grid">
+                  <label>Each team buys at least<input class="input" type="number" min="0" data-cf="min" data-cid="${c.id}" value="${c.min}" ${dis}></label>
+                  <label><span>and at most <small>(blank = no limit)</small></span><input class="input" type="number" min="0" data-cf="max" data-cid="${c.id}" value="${c.max || ""}" placeholder="No limit" ${dis}></label>
+                  <label>Base price<input class="input" type="number" min="1" data-cf="base" data-cid="${c.id}" value="${c.base}" ${dis}></label>
+                  <label>Each bid goes up by<input class="input" type="number" min="1" data-cf="step" data-cid="${c.id}" value="${c.step}" ${dis}></label>
+                </div>
+                <label class="cat-unsold">If a player goes unsold
+                  <select class="select" data-cf="unsold" data-cid="${c.id}">
+                    ${Object.entries(UNSOLD_RULES).map(([k2, v]) => `<option value="${k2}" ${c.unsold === k2 ? "selected" : ""}>${v}</option>`).join("")}
+                  </select></label>
+              </div>`).join("")}
+           </div>
+           ${cats.length < MAX_CATS && !locked() ? `<button class="btn btn-light" id="addCat" style="margin-top:12px">+ Add category</button>` : ""}`) +
+        sec("slate", "🔁", "Unsold players", "",
+          `<p class="hint" style="margin:0">Unsold players always go into a pool you can call from at any time. Each category's rule decides when they come back on their own. With <b>wishlist</b>, teams privately mark the players they want, and you only see how many teams want each one.</p>`);
+      const add = $("addCat");
+      if (add) add.onclick = () => {
+        const id = newId(), n = cats.length;
+        A.settings.cats[id] = { name: `Category ${n + 1}`, min: 0, max: 0, base: 50, step: 10, unsold: "afterAll", order: n + 1 };
+        saveSettings(); renderCats();
+      };
+      updateTop();
+    }
+
+    $("pane-cats").addEventListener("input", e => {
+      const t = e.target;
+      if (!t.dataset.cf || t.tagName !== "INPUT") return;
+      const c = A.settings.cats[t.dataset.cid], f = t.dataset.cf;
+      const num = (v, min) => Math.max(min, Math.round(Number(v) || 0));
+      if (f === "name") c.name = t.value;
+      else if (f === "max") c.max = t.value === "" ? 0 : num(t.value, 0);
+      else c[f] = num(t.value, f === "min" ? 0 : 1);
+      saveSettings();
+    });
+    $("pane-cats").addEventListener("change", e => {
+      const t = e.target;
+      if (t.dataset.cf !== "unsold") return;
+      A.settings.cats[t.dataset.cid].unsold = t.value;
+      saveSettings();
+    });
+    $("pane-cats").addEventListener("click", async e => {
+      const mv = e.target.closest("[data-cmove]"), del = e.target.closest("[data-cdel]");
+      const cats = catList(A.settings);
+      if (mv) {
+        const k = cats.findIndex(c => c.id === mv.dataset.cid), j = k + Number(mv.dataset.cmove);
+        if (j < 0 || j >= cats.length) return;
+        [cats[k], cats[j]] = [cats[j], cats[k]];
+        cats.forEach((c, n) => { A.settings.cats[c.id].order = n + 1; });
+        saveSettings(); renderCats();
+      }
+      if (del) {
+        const id = del.dataset.cdel;
+        const used = Object.values(A.players).filter(p => p.cat === id).length;
+        if (!await confirmBox(`Delete ${A.settings.cats[id].name}?`, used ? `Its ${used} player${used === 1 ? "" : "s"} will need a new category.` : "This category has no players.", { ok: "Delete category", danger: true })) return;
+        delete A.settings.cats[id];
+        saveSettings(); renderCats();
+      }
+    });
+
+    // ============================================================
+    // 3 · Teams (each gets a secret PIN for bidding)
+    // ============================================================
+    function renderTeams() {
+      const entries = Object.entries(A.teams);
+      const reqs = Object.entries(A.teamRequests || {}).filter(([id]) => A.teams[id]);
+      $("pane-teams").innerHTML =
+        (reqs.length ? sec("amber", "📨", "Waiting for your approval", "Teams asked to change their name or picture from their phones.",
+          `<div class="list">${reqs.map(([id, r]) => `
+            <div class="req">
+              ${crestHTML(A.teams[id], logoOf(logos, id), "lg")}
+              <div class="req-change"><span class="req-arrow">→</span>${crestHTML({ ...A.teams[id], name: r.name || A.teams[id].name }, r.logo || logoOf(logos, id), "lg")}
+                <div>${r.name && r.name !== A.teams[id].name ? `<div class="req-old">${safe(A.teams[id].name)}</div>` : ""}<div class="req-name">${safe(r.name || A.teams[id].name)}</div></div></div>
+              <div class="row"><button class="btn btn-sun btn-sm" data-approve="${id}">Approve</button><button class="btn btn-danger btn-sm" data-reject="${id}">Reject</button></div>
+            </div>`).join("")}</div>`) : "") +
+        sec("blue", "🛡️", `Teams <span class="muted" style="font-size:18px">${entries.length} of ${MAX_TEAMS}</span>`,
+          `Each team gets a PIN. Only people with the PIN can bid for that team. Budgets start at the default (${money(A.settings.purse, A.settings)}); type a number to give a team its own.`,
+          `<div class="list">
+            ${entries.map(([id, t]) => `
+              <div class="team-card">
+                <label class="crest-edit" title="Team picture">${crestHTML(t, logoOf(logos, id))}<input type="file" accept="image/*" data-logo="${id}" hidden></label>
+                <label class="swatch" style="background:${safe(t.color)}" title="Team colour"><input type="color" data-color="${id}" value="${safe(t.color)}"></label>
+                <input class="input" data-tname="${id}" maxlength="30" value="${safe(t.name)}" aria-label="Team name">
+                <label class="team-budget" title="Leave blank to use the default budget">
+                  <span>Budget</span>
+                  <input class="input" type="number" min="1" data-budget="${id}" value="${t.budget > 0 ? t.budget : ""}" placeholder="${A.settings.purse}" ${A.status === "ended" ? "disabled" : ""}>
+                  <small>${t.budget > 0 && +t.budget !== +A.settings.purse ? "Custom" : "Default"}</small>
+                </label>
+                <span class="pin-chip" title="Team PIN">PIN ${safe(pins[id] || "—")}</span>
+                <div class="row">
+                  <button class="icon-btn" data-newpin="${id}" title="New PIN" aria-label="New PIN">↻</button>
+                  ${locked() || entries.length <= MIN_TEAMS ? "" : `<button class="icon-btn" data-tdel="${id}" title="Delete team" aria-label="Delete team">✕</button>`}
+                </div>
+              </div>`).join("") || `<div class="empty">No teams yet.</div>`}
+          </div>
+          ${locked() ? `<p class="hint">The auction has started, so teams can't be added or removed.</p>`
+            : entries.length >= MAX_TEAMS ? `<p class="hint">That's the maximum of ${MAX_TEAMS} teams.</p>`
+            : `<button class="btn btn-sun" id="addTeam" style="margin-top:12px">+ Add team</button>`}`);
+      if ($("addTeam")) $("addTeam").onclick = async () => {
+        const id = newId();
+        const n = Object.keys(A.teams).length;
+        A.teams[id] = { name: `Team ${String.fromCharCode(65 + (n % 26))}`, color: TEAM_COLOURS[n % TEAM_COLOURS.length] };
+        pins[id] = makePin();
+        await update(ref(db), { [`auctions/${code}/teams/${id}`]: A.teams[id] });
+        await set(ref(db, `auctionSecrets/${code}/teamPins/${id}`), pins[id]);
+        renderTeams(); updateTop();
+        document.querySelector(`[data-tname="${id}"]`)?.select();
+      };
+    }
+
+    $("pane-teams").addEventListener("input", e => {
+      const t = e.target;
+      if (t.dataset.tname) {
+        const id = t.dataset.tname;
+        A.teams[id].name = t.value;
+        saveLater("t" + id, () => set(ref(db, `auctions/${code}/teams/${id}/name`), t.value.trim() || "Team"));
+      }
+      if (t.dataset.color) {
+        const id = t.dataset.color;
+        A.teams[id].color = t.value;
+        t.parentElement.style.background = t.value;
+        saveLater("c" + id, () => set(ref(db, `auctions/${code}/teams/${id}/color`), t.value));
+      }
+    });
+    $("pane-teams").addEventListener("change", async e => {
+      const t = e.target;
+      if (t.dataset.budget) return changeBudget(t.dataset.budget, t);
+      if (!t.dataset.logo || !t.files[0]) return;
+      const id = t.dataset.logo;
+      try {
+        const src = await compressPhoto(t.files[0], 240);
+        await set(ref(db, `auctionPhotos/${code}/t_${id}`), src);
+        A.teams[id].logoV = Date.now();
+        await set(ref(db, `auctions/${code}/teams/${id}/logoV`), A.teams[id].logoV);
+        logos[id] = { v: A.teams[id].logoV, src };
+        renderTeams();
+      } catch (err) { alertBox("Picture not used", "That picture couldn't be read. Try a JPG or PNG.", "🖼️"); }
+    });
+
+    // One team's own budget. Blank = back to the default. During a live auction the money left moves by the same amount.
+    async function changeBudget(id, input) {
+      const s = A.settings;
+      const raw = input.value.trim();
+      const val = raw === "" ? null : Math.max(1, Math.round(Number(raw) || 0));
+      const oldB = teamBudget(A.teams[id], s), newB = val || +s.purse;
+      if (A.status === "live") {
+        const fresh = (await get(ref(db, `auctions/${code}/teams/${id}`))).val() || {};
+        const left = (fresh.purseLeft ?? oldB) + (newB - oldB);
+        if (left < 0) {
+          await alertBox("Budget too low", `${fresh.name} has already spent ${money(fresh.spent || 0, s)}. The budget can't go below that.`, "💸");
+          input.value = A.teams[id].budget || ""; return;
+        }
+        if (!await confirmBox(`Change ${fresh.name}'s budget?`, `From ${money(oldB, s)} to ${money(newB, s)}. Money left becomes ${money(left, s)}.`, { ok: "Change budget" })) {
+          input.value = A.teams[id].budget || ""; return;
+        }
+        const nt = { ...fresh, purseLeft: left };
+        await update(ref(db), {
+          [`auctions/${code}/teams/${id}/budget`]: val, [`auctions/${code}/teams/${id}/purseLeft`]: left,
+          [`auctions/${code}/teams/${id}/maxBid`]: allMaxBids(nt, s)
+        });
+        Object.assign(A.teams[id], { purseLeft: left, maxBid: allMaxBids(nt, s) });
+      } else await set(ref(db, `auctions/${code}/teams/${id}/budget`), val);
+      if (val) A.teams[id].budget = val; else delete A.teams[id].budget;
+      $("saveNote").textContent = "Saved";
+      renderTeams(); updateTop();
+    }
+
+    $("pane-teams").addEventListener("click", async e => {
+      const ok = e.target.closest("[data-approve]"), no = e.target.closest("[data-reject]");
+      if (ok || no) {
+        const id = (ok || no).dataset.approve || (ok || no).dataset.reject;
+        const r = (A.teamRequests || {})[id];
+        const changes = { [`auctions/${code}/teamRequests/${id}`]: null };
+        if (ok && r) {
+          if (r.name) { changes[`auctions/${code}/teams/${id}/name`] = String(r.name).slice(0, 24); A.teams[id].name = r.name; }
+          if (r.logo) {
+            await set(ref(db, `auctionPhotos/${code}/t_${id}`), r.logo);
+            A.teams[id].logoV = Date.now();
+            changes[`auctions/${code}/teams/${id}/logoV`] = A.teams[id].logoV;
+            logos[id] = { v: A.teams[id].logoV, src: r.logo };
+          }
+        }
+        await update(ref(db), changes);
+        delete (A.teamRequests || {})[id];
+        renderTeams(); updateTop();
+        return;
+      }
+      const np = e.target.closest("[data-newpin]"), del = e.target.closest("[data-tdel]");
+      if (np) {
+        if (!await confirmBox("Make a new PIN?", "The old PIN and team link stop working for new devices. You'll need to share the new link with this team.", { ok: "Make new PIN" })) return;
+        const id = np.dataset.newpin;
+        pins[id] = makePin();
+        delete shared[id];
+        await update(ref(db), { [`auctionSecrets/${code}/teamPins/${id}`]: pins[id], [`auctionSecrets/${code}/shared/${id}`]: null });
+        renderTeams();
+      }
+      if (del) {
+        const id = del.dataset.tdel;
+        if (!await confirmBox(`Delete ${A.teams[id].name}?`, "The team and its PIN are removed.", { ok: "Delete team", danger: true })) return;
+        delete A.teams[id]; delete pins[id];
+        await update(ref(db), { [`auctions/${code}/teams/${id}`]: null });
+        await set(ref(db, `auctionSecrets/${code}/teamPins/${id}`), null);
+        renderTeams(); updateTop();
+      }
+    });
+
+    // ============================================================
+    // 4 · Players (fields depend on the sport)
+    // ============================================================
+    const playerList = () => Object.entries(A.players).sort((a, b) => (a[1].order || 0) - (b[1].order || 0));
+    const nextOrder = () => Math.max(0, ...Object.values(A.players).map(p => p.order || 0)) + 1;
+    const sch = () => schemaFor(A.settings.sport);
+    let lastCat = null, lastRole = "";
+
+    // Spreadsheet columns, in template order
+    function columns() {
+      const sp = A.settings.sport, S = sch();
+      const cols = [{ key: "name", label: "Name", req: true }, { key: "age", label: "Age" }];
+      if (S) {
+        cols.push({ key: "role", label: S.roleLabel, req: true }, { key: "sub", label: S.subLabel });
+        S.extra.forEach(x => cols.push({ key: x.key, label: x.label }));
+      } else cols.push({ key: "info", label: "Info" });
+      cols.push({ key: "cat", label: "Category" });
+      return cols;
+    }
+    const ALIASES = {
+      name: ["name", "player", "playername", "fullname"],
+      age: ["age", "years"],
+      role: ["type", "role", "position", "pos", "playertype", "playerrole", "speciality", "specialty"],
+      sub: ["subtype", "subposition", "style", "battingposition", "bowlingstyle", "detailedposition", "playingrole", "subrole"],
+      batHand: ["battinghand", "bathand", "bats", "batting", "batshand"],
+      bowlHand: ["bowlinghand", "bowlhand", "bowls", "bowlingarm", "bowling"],
+      foot: ["foot", "preferredfoot", "strongfoot", "footed"],
+      cat: ["category", "cat", "group", "pool", "set", "auctioncategory"],
+      info: ["info", "details", "notes", "note", "description", "about"]
+    };
+    const optionHTML = (opts, sel, blank = "–") => `<option value="">${blank}</option>` + opts.map(([v, l]) => `<option value="${safe(v)}" ${sel === v ? "selected" : ""}>${safe(l)}</option>`).join("");
+    const roleOptions = sel => optionHTML(Object.entries(sch().roles).map(([k, r]) => [k, r.name]), sel, "Choose…");
+    const subOptions = (role, sel) => { const r = sch()?.roles[role]; return r && r.subs.length ? optionHTML(r.subs.map(([n]) => [n, n]), sel) : `<option value="">–</option>`; };
+    const catOptions = sel => catList(A.settings).map(c => `<option value="${c.id}" ${sel === c.id ? "selected" : ""}>${safe(c.name)}</option>`).join("");
+
+    function renderPlayers() {
+      const list = playerList(), s = A.settings, S = sch(), cats = catList(s);
+      const nTeams = Object.keys(A.teams).length;
+      if (!s.sport) {
+        $("pane-players").innerHTML = sec("green", "🏆", "Pick the sport first", "The player details depend on it.",
+          `<button class="btn btn-sun" id="goBasics">Choose the sport</button>`);
+        $("goBasics").onclick = () => showTab("basics");
+        return;
+      }
+      if (!lastCat || !s.cats[lastCat]) lastCat = (cats[0] || {}).id;
+
+      const importSec = sec("teal", "📥", "Import players", "Upload an Excel or CSV file. Add photos afterwards in the list below.",
+        `<label class="drop" id="dropZone">
+           <b>Upload Excel or CSV</b>
+           <small>Click to choose a file, or drop it here · .xlsx, .xls, .csv</small>
+           <input type="file" id="sheetFile" accept=".xlsx,.xls,.xlsm,.ods,.csv,.txt" hidden>
+         </label>
+         <p class="hint">Columns, in this order (the header row is optional):</p>
+         <div class="cols-note">${columns().map(c => `<span class="${c.req ? "req" : ""}">${safe(c.label)}${c.req ? " *" : ""}</span>`).join("")}</div>
+         <div class="row" style="margin-top:12px">
+           <button class="btn btn-light btn-sm" id="tmplBtn">Download ${safe(sportName(s.sport))} template</button>
+         </div>
+         <details style="margin-top:12px">
+           <summary style="cursor:pointer;font-weight:700">Or paste rows copied from Excel</summary>
+           <textarea id="bulkText" class="textarea" style="margin-top:8px" placeholder="${safe(columns().map(c => c.label).join(", "))}"></textarea>
+           <button id="bulkAdd" class="btn btn-sun btn-sm" style="margin-top:8px">Add these players</button>
+         </details>`);
+
+      const addSec = sec("green", "➕", "Add one player", "",
+        `<div class="add-grid">
+           <label class="wide">Name<input id="aName" class="input" maxlength="60" placeholder="Player name"></label>
+           <label>Age<input id="aAge" class="input" type="number" min="5" max="80" placeholder="–"></label>
+           ${S ? `
+             <label>${safe(S.roleLabel)}<select id="aRole" class="select">${roleOptions(lastRole)}</select></label>
+             <label>${safe(S.subLabel)}<select id="aSub" class="select">${subOptions(lastRole, "")}</select></label>
+             ${S.extra.map(x => `<label>${safe(x.label)}<select id="a_${x.key}" class="select">${optionHTML(x.options, "")}</select></label>`).join("")}`
+           : `<label class="wide">Info<input id="aInfo" class="input" maxlength="60" placeholder="e.g. Captain, left-handed"></label>`}
+           <label>Category<select id="aCat" class="select">${catOptions(lastCat)}</select></label>
+           <button id="pAdd" class="btn btn-sun">Add player</button>
+         </div>`);
+
+      const countSec = sec("gold", "📊", "Players per category", "Red means there aren't enough for every team to meet its minimum.",
+        `<div class="cat-summary">${cats.map(c => {
+          const have = list.filter(([, p]) => p.cat === c.id).length, need = c.min * nTeams;
+          return `<span class="cat-chip ${need && have < need ? "short" : ""}" style="--cc:${catColour(s, c.id)}"><b>${safe(c.name)}</b> ${have}${need ? ` of ${need} needed` : ""} · base ${money(c.base, s)}</span>`;
+        }).join("")}</div>`);
+
+      const head = `<th>#</th><th>Photo</th><th>Name</th><th>Age</th>${S ? `<th>${safe(S.roleLabel)}</th><th>${safe(S.subLabel)}</th>${S.extra.map(x => `<th>${safe(x.label)}</th>`).join("")}` : `<th>Info</th>`}<th>Category</th><th>Status</th><th></th>`;
+      const rows = list.map(([id, p], k) => {
+        const c = cats.find(x => x.id === p.cat);
+        return `<tr class="${c ? "" : "no-cat"}">
+          <td>${k + 1}</td>
+          <td>${p.hasPhoto
+            ? `<label title="Change photo"><img class="thumb" data-photo-of="${id}" alt=""><input type="file" accept="image/*" data-photo="${id}" hidden></label>`
+            : `<label class="thumb-add" title="Add photo">+<input type="file" accept="image/*" data-photo="${id}" hidden></label>`}</td>
+          <td><input class="input" data-pf="name" data-pid="${id}" value="${safe(p.name)}" maxlength="60" style="min-width:150px"></td>
+          <td><input class="input age" type="number" min="5" max="80" data-pf="age" data-pid="${id}" value="${safe(p.age || "")}"></td>
+          ${S ? `
+            <td><select class="select" data-pf="role" data-pid="${id}">${roleOptions(p.role || "")}</select></td>
+            <td><select class="select" data-pf="sub" data-pid="${id}">${subOptions(p.role, p.sub || "")}</select></td>
+            ${S.extra.map(x => `<td><select class="select" data-pf="${x.key}" data-pid="${id}">${optionHTML(x.options, p[x.key] || "")}</select></td>`).join("")}`
+          : `<td><input class="input" data-pf="info" data-pid="${id}" value="${safe(p.info || "")}" maxlength="60" placeholder="Optional"></td>`}
+          <td><select class="select" data-pf="cat" data-pid="${id}" ${p.status === "sold" ? "disabled" : ""}>${c ? "" : `<option value="">Choose…</option>`}${catOptions(p.cat)}</select></td>
+          <td><span class="status-tag ${p.status || ""}">${p.status === "sold" ? "Sold" : p.status === "unsold" ? "Unsold" : "Waiting"}</span></td>
+          <td>${p.status === "sold" ? "" : `<button class="icon-btn" data-pdel="${id}" aria-label="Delete player">✕</button>`}</td>
+        </tr>`;
+      }).join("");
+      const listSec = sec("slate", "📋", `Player list <span class="muted" style="font-size:18px">${list.length}</span>`, "Edits save as you type. Click + to add a photo.",
+        list.length ? `<div class="row" style="justify-content:flex-end"><button id="shuffleBtn" class="btn btn-light btn-sm">Shuffle the order</button></div>
+          <div class="table-scroll"><table class="players-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`
+          : `<div class="empty">No players yet. Import a file or add them one by one.</div>`);
+
+      $("pane-players").innerHTML = importSec + `<div class="sec-cols">${addSec}${countSec}</div><div style="height:14px"></div>` + listSec;
+      loadThumbs();
+
+      // import
+      $("sheetFile").onchange = async e => { const f = e.target.files[0]; if (f) importFile(f); e.target.value = ""; };
+      const dz = $("dropZone");
+      dz.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("over"); });
+      dz.addEventListener("dragleave", () => dz.classList.remove("over"));
+      dz.addEventListener("drop", e => { e.preventDefault(); dz.classList.remove("over"); const f = e.dataTransfer.files[0]; if (f) importFile(f); });
+      $("tmplBtn").onclick = downloadTemplate;
+      $("bulkAdd").onclick = () => importRows(parseTable($("bulkText").value || ""));
+      // add one
+      $("pAdd").onclick = addOne;
+      $("aName").addEventListener("keydown", e => { if (e.key === "Enter") addOne(); });
+      $("aCat").onchange = () => { lastCat = $("aCat").value; };
+      if ($("aRole")) $("aRole").onchange = () => {
+        lastRole = $("aRole").value;
+        $("aSub").innerHTML = subOptions(lastRole, "");
+        if (A.settings.cats[lastRole]) { lastCat = lastRole; $("aCat").value = lastRole; }   // Bowler → Bowlers
+      };
+      if ($("shuffleBtn")) $("shuffleBtn").onclick = shuffle;
+    }
+
+    async function loadThumbs() {
+      for (const img of document.querySelectorAll("[data-photo-of]")) {
+        const snap = await get(ref(db, `auctionPhotos/${code}/${img.dataset.photoOf}`));
+        if (snap.exists()) img.src = snap.val();
+      }
+    }
+
+    // Drop empty values (the database refuses "undefined")
+    const tidy = p => Object.fromEntries(Object.entries(p).filter(([, v]) => v !== "" && v !== null && v !== undefined));
+
+    async function addOne() {
+      const name = $("aName").value.trim();
+      if (!name) { $("aName").focus(); return; }
+      const S = sch();
+      const p = { name, age: cleanAge($("aAge").value), cat: $("aCat").value || (catList(A.settings)[0] || {}).id, order: nextOrder(), status: "pending" };
+      if (S) {
+        p.role = $("aRole").value; p.sub = $("aSub").value;
+        S.extra.forEach(x => { p[x.key] = $(`a_${x.key}`).value; });
+      } else p.info = $("aInfo").value.trim();
+      lastCat = p.cat;
+      const id = newId(), clean = tidy(p);
+      A.players[id] = clean;
+      await set(ref(db, `auctions/${code}/players/${id}`), clean);
+      renderPlayers(); updateTop();
+      $("aName").focus();
+    }
+
+    async function importFile(file) {
+      try { importRows(await readSheetFile(file)); }
+      catch (e) { alertBox("File not read", e.message || "That file couldn't be read.", "📄"); }
+    }
+
+    // Rows from Excel/CSV → players. Columns found by header name, or by template order.
+    async function importRows(rows) {
+      rows = (rows || []).filter(r => r.some(c => String(c).trim()));
+      if (!rows.length) { toast("No rows found."); return; }
+      const s = A.settings, S = sch(), sport = s.sport;
+      const heads = rows[0].map(h => { const n = norm(h); return (Object.entries(ALIASES).find(([, a]) => a.includes(n)) || [])[0] || null; });
+      let map;
+      if (heads.includes("name")) { map = heads; rows = rows.slice(1); }
+      else map = columns().map(c => c.key);
+      const cell = (r, key) => { const i = map.indexOf(key); return i >= 0 ? String(r[i] ?? "").trim() : ""; };
+
+      const findCat = name => {
+        const n = norm(name);
+        if (!n) return null;
+        const cats = catList(s);
+        return (cats.find(c => norm(c.name) === n) || cats.find(c => norm(c.name).startsWith(n) || n.startsWith(norm(c.name).replace(/s$/, ""))) || {}).id || null;
+      };
+      const existing = new Set(Object.values(A.players).map(p => norm(p.name)));
+      const changes = {};
+      let order = nextOrder(), added = 0, newCats = 0, dupes = 0;
+      const skipped = [];
+      for (const r of rows) {
+        const name = cell(r, "name");
+        if (!name) continue;
+        if (existing.has(norm(name))) { dupes++; continue; }
+        existing.add(norm(name));
+        const p = { name: name.slice(0, 60), age: cleanAge(cell(r, "age")), order: order++, status: "pending" };
+        let info = cell(r, "info");
+        if (S) {
+          p.role = matchRole(sport, cell(r, "role"));
+          p.sub = matchSub(sport, p.role, cell(r, "sub"));
+          if (sport === "cricket") { p.batHand = matchHand(cell(r, "batHand")); p.bowlHand = matchHand(cell(r, "bowlHand")); }
+          if (sport === "football") p.foot = matchHand(cell(r, "foot"), true);
+        } else info = [cell(r, "role"), cell(r, "sub"), info].filter(Boolean).join(" · ");
+        if (info) p.info = info.slice(0, 60);
+        // category: the column if given, else the player's type (Bowler → Bowlers), else the first one
+        const catText = cell(r, "cat");
+        let cat = findCat(catText);
+        if (!cat && catText) {
+          if (catList(s).length < MAX_CATS) {
+            cat = newId();
+            s.cats[cat] = { name: catText.slice(0, 24), min: 0, max: 0, base: 50, step: 10, unsold: "afterAll", order: catList(s).length + 1 };
+            newCats++;
+          } else { skipped.push(`${name} (${catText})`); continue; }
+        }
+        if (!cat && p.role && s.cats[p.role]) cat = p.role;
+        if (!cat && p.role) cat = findCat(S.roles[p.role].name);
+        p.cat = cat || (catList(s)[0] || {}).id;
+        const id = newId(), clean = tidy(p);
+        A.players[id] = clean;
+        changes[`auctions/${code}/players/${id}`] = clean;
+        added++;
+      }
+      if (newCats) changes[`auctions/${code}/settings/cats`] = s.cats;
+      if (added) await update(ref(db), changes);
+      renderPlayers(); updateTop();
+      const bits = [`Added ${added} player${added === 1 ? "" : "s"}`];
+      if (dupes) bits.push(`skipped ${dupes} already in the list`);
+      if (newCats) bits.push(`made ${newCats} new categor${newCats === 1 ? "y" : "ies"} (set their prices in Categories)`);
+      toast(bits.join(", "));
+      if (skipped.length) dialog({ title: "Some players were skipped", icon: "⚠️", dismiss: true,
+        html: `<p>There's no room for more categories (maximum ${MAX_CATS}), so these weren't added:</p><ul class="dlg-list">${skipped.map(x => `<li>${safe(x)}</li>`).join("")}</ul>`,
+        buttons: [{ label: "OK", value: true, kind: "sun" }] });
+    }
+
+    function downloadTemplate() {
+      const sport = A.settings.sport;
+      const head = columns().map(c => c.label);
+      const eg = sport === "cricket" ? [
+          ["Arif Hossain", 27, "Batsman", "Opener", "Left", "", "Batters"],
+          ["Sabbir Khan", 24, "Bowler", "Leg Spin", "Right", "Right", "Bowlers"],
+          ["Tanvir Ahmed", 30, "All Rounder", "Bowling All Rounder", "Left", "Left", "All-rounders"],
+          ["Nayeem Islam", 26, "Wicket Keeper", "Middle Order", "Right", "", "Wicketkeepers"]]
+        : sport === "football" ? [
+          ["Rafiq Hasan", 25, "Goalkeeper", "", "Right", "Goalkeepers"],
+          ["Mahbub Alam", 28, "Defender", "Centre Back", "Left", "Defenders"],
+          ["Jewel Rana", 23, "Midfielder", "Attacking Mid", "Both", "Midfielders"],
+          ["Sohel Rahman", 21, "Forward", "Striker", "Right", "Forwards"]]
+        : [["Player One", 24, "Captain", catList(A.settings)[0]?.name || ""], ["Player Two", 19, "", catList(A.settings)[1]?.name || ""]];
+      downloadCSV(toCSV([head, ...eg]), `${sportName(sport)} players template`);
+    }
+
+    async function shuffle() {
+      const ids = playerList().filter(([, p]) => p.status !== "sold").map(([id]) => id);
+      for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+      const base = Math.max(0, ...playerList().filter(([, p]) => p.status === "sold").map(([, p]) => p.order || 0)) + 1;
+      const changes = {};
+      ids.forEach((id, k) => { A.players[id].order = base + k; changes[`auctions/${code}/players/${id}/order`] = base + k; });
+      await update(ref(db), changes);
+      renderPlayers();
+    }
+
+    // typing: name, age, info
+    $("pane-players").addEventListener("input", e => {
+      const t = e.target, f = t.dataset.pf, id = t.dataset.pid;
+      if (!id || !["name", "info", "age"].includes(f)) return;
+      const val = f === "name" ? (t.value.trim() || "Player") : f === "age" ? (cleanAge(t.value) || null) : (t.value.trim() || null);
+      if (val === null) delete A.players[id][f]; else A.players[id][f] = val;
+      saveLater(`p${id}${f}`, () => set(ref(db, `auctions/${code}/players/${id}/${f}`), val));
+    });
+    // dropdowns and photos
+    $("pane-players").addEventListener("change", async e => {
+      const t = e.target, f = t.dataset.pf, id = t.dataset.pid;
+      if (id && ["role", "sub", "cat", "batHand", "bowlHand", "foot"].includes(f)) {
+        const p = A.players[id], v = t.value || null;
+        const changes = { [`auctions/${code}/players/${id}/${f}`]: v };
+        if (v === null) delete p[f]; else p[f] = v;
+        if (f === "role") {
+          const subs = (sch().roles[v] || { subs: [] }).subs.map(([n]) => n);
+          if (p.sub && !subs.includes(p.sub)) { delete p.sub; changes[`auctions/${code}/players/${id}/sub`] = null; }
+          if (v && p.status !== "sold" && A.settings.cats[v]) { p.cat = v; changes[`auctions/${code}/players/${id}/cat`] = v; }
+        }
+        await update(ref(db), changes);
+        $("saveNote").textContent = "Saved";
+        if (f === "role" || f === "cat") { renderPlayers(); updateTop(); }
+        return;
+      }
+      if (!t.dataset.photo || !t.files[0]) return;
+      const pid = t.dataset.photo;
+      try {
+        const src = await compressPhoto(t.files[0]);
+        await set(ref(db, `auctionPhotos/${code}/${pid}`), src);
+        A.players[pid].hasPhoto = true;
+        await set(ref(db, `auctions/${code}/players/${pid}/hasPhoto`), true);
+        renderPlayers();
+      } catch (err) { alertBox("Photo not used", "That photo couldn't be read. Try a JPG or PNG.", "🖼️"); }
+    });
+    $("pane-players").addEventListener("click", async e => {
+      const d = e.target.closest("[data-pdel]");
+      if (!d) return;
+      const id = d.dataset.pdel;
+      if (!await confirmBox(`Remove ${A.players[id].name}?`, "The player and their photo are removed from this auction.", { ok: "Remove player", danger: true })) return;
+      delete A.players[id];
+      await update(ref(db), { [`auctions/${code}/players/${id}`]: null, [`auctionPhotos/${code}/${id}`]: null });
+      renderPlayers(); updateTop();
+    });
+
+    // ============================================================
+    // 5 · Share: codes, links and QR codes
+    // ============================================================
+    function renderShare() {
+      const base = new URL("./", location.href).href;
+      const watch = `${base}?a=${code}`;
+      const teams = Object.entries(A.teams);
+      $("pane-share").innerHTML =
+        sec("purple", "📺", "Viewers", "Anyone can watch with the code. No PIN, no bidding.",
+          `<div class="share-grid"><div class="share-card">
+             <p class="code-big">${code}</p>
+             <div class="qr" id="qr-watch"></div>
+             <button class="btn btn-light btn-block" data-copy="${safe(watch)}">Copy viewer link</button>
+           </div></div>
+           <p class="hint">Or open <b>${safe(base)}</b> and type the code.</p>`) +
+        sec("blue", "🔑", "Team links", "Each link includes that team's PIN. Send each one only to its own team.",
+          `<div class="share-grid">${teams.map(([id, t]) => {
+            const link = `${base}?a=${code}&t=${id}&k=${pins[id] || ""}`;
+            return `<div class="share-card" style="border-top:6px solid ${safe(t.color)}">
+                <p style="margin:0;font-family:var(--display);font-size:22px;font-weight:800;text-transform:uppercase">${safe(t.name)}</p>
+                <p class="muted" style="margin:2px 0 0">PIN <b>${safe(pins[id] || "—")}</b></p>
+                <div class="qr" id="qr-${id}"></div>
+                <button class="btn btn-light btn-block" data-copy="${safe(link)}" data-team="${id}">Copy team link</button>
+                <p class="share-state ${shared[id] ? "ok" : ""}">${shared[id] ? "✓ Shared" : `Not shared yet · <button class="link-btn" data-mark="${id}">Mark as shared</button>`}</p>
+              </div>`;
+          }).join("")}</div>`);
+      if (window.QRCode) {
+        new QRCode($("qr-watch"), { text: watch, width: 140, height: 140, colorDark: "#13262A", colorLight: "#ffffff" });
+        teams.forEach(([id]) => new QRCode($(`qr-${id}`), { text: `${base}?a=${code}&t=${id}&k=${pins[id] || ""}`, width: 140, height: 140, colorDark: "#13262A", colorLight: "#ffffff" }));
+      }
+    }
+    async function markShared(id) {
+      shared[id] = true;
+      await set(ref(db, `auctionSecrets/${code}/shared/${id}`), true);
+      renderShare();
+    }
+    $("pane-share").addEventListener("click", async e => {
+      const m = e.target.closest("[data-mark]");
+      if (m) return markShared(m.dataset.mark);
+      const b = e.target.closest("[data-copy]");
+      if (!b) return;
+      if (await copyText(b.dataset.copy)) toast("Link copied");
+      if (b.dataset.team && !shared[b.dataset.team]) markShared(b.dataset.team);
+    });
+
+    function toast(text) {
+      const t = document.createElement("div");
+      t.className = "toast";
+      t.textContent = text;
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 2600);
+    }
+
+    start();
+  </script>
+</body>
+</html>

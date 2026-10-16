@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auction room · BidArena</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700;800&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-sport="home">
+  <main class="wrap room">
+    <div class="room-top">
+      <span id="brandSlot"></span>
+      <h1 id="roomTitle" class="room-title"></h1>
+      <span id="livePill" class="pill live" hidden>● Live</span>
+      <span id="joinChip" class="join-chip" hidden></span>
+      <button id="reqBtn" class="btn btn-dark req-btn" hidden>Team requests<span class="badge" id="reqCount"></span></button>
+      <a id="setupLink" class="btn btn-dark" href="host.html">⚙ Setup</a>
+      <button id="fullBtn" class="btn btn-dark" title="Full screen (F)">⛶</button>
+    </div>
+
+    <div id="message" class="card narrow" hidden></div>
+
+    <div id="statStrip" class="statstrip" hidden></div>
+
+    <div id="roomGrid" class="room-grid" hidden>
+      <div>
+        <section id="stage" class="stage"></section>
+
+        <!-- Host controls -->
+        <div id="controls" class="controls">
+          <button id="nextBtn" class="btn btn-sun btn-lg">Next player ▶</button>
+          <button id="pickBtn" class="btn btn-dark">Choose player</button>
+          <span class="sep"></span>
+          <button id="pauseBtn" class="btn btn-dark">⏸ Pause</button>
+          <button id="soldBtn" class="btn btn-dark">🔨 Sold now</button>
+          <button id="unsoldBtn" class="btn btn-dark">Unsold</button>
+          <button id="restartBtn" class="btn btn-dark">↺ Restart bidding</button>
+          <span class="sep"></span>
+          <button id="undoBtn" class="btn btn-dark">Undo last sale</button>
+          <button id="endBtn" class="btn btn-danger">End auction</button>
+        </div>
+        <div id="quickbid" class="quickbid">
+          <p>Bid for a team (for paddles raised in the room)</p>
+          <div id="qbRow" class="qb-row"></div>
+        </div>
+        <div class="ticker" id="ticker" hidden><span class="ticker-label">🔨 Sold</span><div class="ticker-track" id="tickerTrack"></div></div>
+        <p class="kbd">Shortcuts: <b>N</b> next · <b>P</b> pause · <b>S</b> sold · <b>U</b> unsold · <b>F</b> full screen</p>
+        <p id="queueNote" class="kbd" style="margin-top:6px"></p>
+      </div>
+
+      <aside class="board">
+        <div class="board-head"><h3>Teams</h3><span id="boardNote" class="muted" style="font-size:13px"></span></div>
+        <div id="teamBoard" class="board"></div>
+        <div class="board-head" style="margin-top:14px"><h3>Unsold pool</h3><span id="poolNote" class="muted" style="font-size:13px"></span></div>
+        <div id="pool" class="pool"></div>
+      </aside>
+    </div>
+
+    <section id="results" hidden></section>
+  </main>
+
+  <script type="module">
+    import {
+      db, ref, get, set, update, push, onValue, serverTimestamp, serverNow, currentUser, isHostAccount, signInHost,
+      safe, animate, initials, money, nextBid, stepFor, allMaxBids, sounds, unlockAudio, confetti, toCSV, downloadCSV, brandHTML, endsAt,
+      catList, catMax, squadLimits, squadText, setupProblems, UNSOLD_RULES,
+      catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine,
+      dialog, alertBox, confirmBox, copyText, teamBudget, purseLeftOf
+    } from "./app.js";
+
+    document.getElementById("brandSlot").innerHTML = brandHTML("Auction room");
+    const $ = id => document.getElementById(id);
+    const code = (new URLSearchParams(location.search).get("a") || "").toUpperCase();
+    const aRef = p => ref(db, `auctions/${code}${p ? "/" + p : ""}`);
+
+    let user = null, A = null;
+    let closing = false;
+    let lastKey = "", lastSeq = -1, lastTick = -1, lastGoing = "";
+    const photos = {};
+    const logos = {};                 // team pictures
+    const crest = (id, size = "") => crestHTML(A.teams[id], logoOf(logos, id), size);
+
+    function message(html) {
+      $("message").innerHTML = html;
+      $("message").hidden = false;
+      $("roomGrid").hidden = true;
+      $("statStrip").hidden = true;
+    }
+
+    // ============================================================
+    // Start: host must be signed in and own the auction
+    // ============================================================
+    async function start() {
+      if (!code) { message(`<h2 class="title">No auction chosen</h2><p class="lead">Open an auction from <a href="host.html">My auctions</a>.</p>`); return; }
+      user = await currentUser();
+      if (!isHostAccount(user)) {
+        message(`<h2 class="title">Sign in to run the room</h2><p class="lead">Only the host who set up this auction can run it.</p>
+          <button id="inBtn" class="btn btn-sun btn-block btn-lg" style="margin-top:16px">Sign in with Google</button>`);
+        $("inBtn").onclick = async () => { try { user = await signInHost(); start(); } catch (e) {} };
+        return;
+      }
+      $("setupLink").href = `host.html?a=${code}`;
+      onValue(aRef(), async snap => {
+        A = snap.val();
+        if (!A) { message(`<h2 class="title">Auction not found</h2><p class="lead">It may have been deleted.</p>`); return; }
+        if (A.owner !== user.uid) { message(`<h2 class="title">Not your auction</h2><p class="lead">Only its host can run this room. To watch, open the viewer page with the code <b>${code}</b>.</p>`); return; }
+        render();
+        if (await loadTeamLogos(code, A.teams, logos)) { lastKey = ""; render(); }   // a team picture changed
+      });
+    }
+
+    const S = () => A.settings || {};
+    const teams = () => Object.entries(A.teams || {});
+    const players = () => Object.entries(A.players || {}).sort((a, b) => (a[1].order || 0) - (b[1].order || 0));
+    const pending = () => players().filter(([, p]) => (p.status || "pending") === "pending");
+    const L = () => A.live || { state: "idle" };
+
+    // ============================================================
+    // Drawing
+    // ============================================================
+    // A player's details as small tags (type, subtype, hands, age…)
+    const tagsHTML = p => { const t = playerTags(p, S()); return t.length ? `<p class="lot-info">${t.map(x => `<span class="tag">${safe(x)}</span>`).join("")}</p>` : ""; };
+
+    function render() {
+      applySportTheme(S().sport);
+      $("roomTitle").textContent = A.title || "Auction";
+      document.title = `${A.title || "Auction"} · Auction room`;
+      const base = new URL("./", location.href).href;
+      $("joinChip").innerHTML = `<span class="jc-url">Join at<br><b>${safe(base.replace(/^https?:\/\//, "").replace(/\/$/, ""))}</b></span><strong>${code}</strong>`;
+      $("joinChip").hidden = false;
+
+      renderRequests();
+      $("livePill").hidden = A.status !== "live";
+      if (A.status === "ended") return renderResults();
+      $("results").hidden = true;
+      if (A.status !== "live") return renderStartScreen();
+
+      $("message").hidden = true;
+      $("roomGrid").hidden = false;
+      renderStats();
+      renderStage();
+      renderBoard();
+      renderControls();
+      renderTicker();
+    }
+
+    // ---------- headline numbers ----------
+    const sales = () => Object.values(A.sales || {}).sort((a, b) => (a.at || 0) - (b.at || 0));
+    function renderStats() {
+      const s = S();
+      const all = sales();
+      const top = all.reduce((m, x) => (!m || x.price > m.price ? x : m), null);
+      const spender = teams().reduce((m, [id, t]) => (!m || (t.spent || 0) > (m[1].spent || 0) ? [id, t] : m), null);
+      const sold = players().filter(([, p]) => p.status === "sold").length;
+      const total = all.reduce((n, x) => n + x.price, 0);
+      $("statStrip").hidden = false;
+      $("statStrip").innerHTML = `
+        <div class="hstat"><span>Players sold</span><b>${sold}<small> / ${players().length}</small></b></div>
+        <div class="hstat"><span>Record signing</span><b>${top ? `${money(top.price, s)} <small>${safe((A.players[top.pid] || {}).name || "")}</small>` : "–"}</b></div>
+        <div class="hstat"><span>Biggest spender</span><b>${spender && spender[1].spent ? `${safe(spender[1].name)} <small>${money(spender[1].spent, s)}</small>` : "–"}</b></div>
+        <div class="hstat"><span>Total spent</span><b>${money(total, s)}</b></div>`;
+    }
+
+    // ---------- sales ticker ----------
+    let tickerKey = "";
+    function renderTicker() {
+      const s = S();
+      const recent = sales().slice(-12).reverse();
+      const key = recent.map(x => x.pid).join(",");
+      if (key === tickerKey) return;
+      tickerKey = key;
+      $("ticker").hidden = !recent.length;
+      const items = recent.map(x => {
+        const p = A.players[x.pid] || {}, t = A.teams[x.team] || {};
+        return `<span>${safe(p.name)} → ${crestHTML(t, logoOf(logos, x.team), "sm")} ${safe(t.name)} <b>${money(x.price, s)}</b></span>`;
+      }).join("");
+      $("tickerTrack").innerHTML = items + items;   // twice, so it loops seamlessly
+    }
+
+    // ---------- before the auction starts ----------
+    function problems() { return setupProblems(S(), A.teams, A.players); }
+
+    function renderStartScreen() {
+      const issues = problems();
+      const s = S(), cats = catList(s);
+      message(`
+        <h2 class="title">Ready to <span>start?</span></h2>
+        <div class="parade" style="justify-content:flex-start;margin:14px 0 4px">${teams().map(([id, t]) => `<div class="pt">${crest(id, "lg")}${safe(t.name)}</div>`).join("")}</div>
+        <p class="lead" style="color:var(--muted)">${teams().length} teams · ${players().length} players · budget ${money(s.purse, s)} each${teams().some(([, t]) => +t.budget > 0 && +t.budget !== +s.purse) ? " (some teams differ)" : ""} · squads of ${squadText(s)} · ${s.timerSec}s timer</p>
+        <div class="cat-summary" style="margin:10px 0">${cats.map(c => `<span class="cat-chip" style="--cc:${catColour(s, c.id)}"><b>${safe(c.name)}</b> buy ${c.min}${c.max ? "–" + c.max : "+"} · base ${money(c.base, s)} · +${money(c.step, s)}</span>`).join("")}</div>
+        ${issues.length ? `<ul class="err" style="padding-left:18px">${issues.map(x => `<li>${safe(x)}</li>`).join("")}</ul>
+          <a class="btn btn-light btn-block" href="host.html?a=${code}" style="margin-top:12px">Fix in setup</a>`
+          : `<p class="hint">Players are auctioned category by category. Starting gives every team its budget (${money(s.purse, s)} unless you set a different one in Teams). Teams can join now with their links.</p>
+             <button id="goLive" class="btn btn-sun btn-block btn-lg" style="margin-top:16px">Start the auction ▶</button>`}`);
+      const go = $("goLive");
+      if (go) go.onclick = goLive;
+    }
+
+    // Before starting: make sure every team has been sent its link
+    async function shareCheck() {
+      const sec = (await get(ref(db, `auctionSecrets/${code}`))).val() || {};
+      const pins = sec.teamPins || {}, shared = { ...(sec.shared || {}) };
+      const joined = new Set(Object.values(A.members || {}).map(m => m.team));
+      const waiting = teams().filter(([id]) => !shared[id] && !joined.has(id));
+      if (!waiting.length) return true;
+      const base = new URL("./", location.href).href;
+      return dialog({
+        title: "Share team links first", icon: "🔑", wide: true, dismiss: false,
+        html: `<p>${waiting.length === teams().length ? "No team has" : `${waiting.length} team${waiting.length === 1 ? " hasn't" : "s haven't"}`} been sent a link yet, so they can't bid from their phones. Copy each link and send it to that team.</p>
+          <div class="share-rows">${waiting.map(([id, t]) => `
+            <div class="share-row" data-row="${id}">
+              ${crest(id)}
+              <div class="grow"><b>${safe(t.name)}</b><div class="muted" style="font-size:14px">PIN <b>${safe(pins[id] || "—")}</b></div></div>
+              <button type="button" class="btn btn-sun btn-sm" data-copyteam="${id}">Copy link</button>
+            </div>`).join("")}</div>
+          <p class="hint">Teams that have already joined on a phone aren't listed here.</p>`,
+        buttons: [{ label: "Not yet", value: false, kind: "light" }, { label: "Start anyway", value: true, kind: "hot" }],
+        onMount: box => {
+          const startBtn = box.querySelector(".dlg-actions .btn:last-child");
+          box.addEventListener("click", async e => {
+            const b = e.target.closest("[data-copyteam]");
+            if (!b) return;
+            const id = b.dataset.copyteam;
+            await copyText(`${base}?a=${code}&t=${id}&k=${pins[id] || ""}`);
+            shared[id] = true;
+            set(ref(db, `auctionSecrets/${code}/shared/${id}`), true);
+            b.outerHTML = `<span class="share-done">✓ Copied</span>`;
+            if (waiting.every(([w]) => shared[w])) { startBtn.textContent = "Start the auction ▶"; startBtn.className = "btn btn-sun"; }
+          });
+        }
+      });
+    }
+
+    async function goLive() {
+      unlockAudio();
+      if (!await shareCheck()) return;
+      const s = S(), cats = catList(s);
+      const changes = { [`auctions/${code}/status`]: "live",
+        [`auctions/${code}/live`]: { state: "idle" }, [`auctions/${code}/sales`]: null, [`auctions/${code}/bids`]: null,
+        [`auctions/${code}/wishCount`]: null, [`auctionsByOwner/${user.uid}/${code}/status`]: "live" };
+      teams().forEach(([id]) => {
+        const t = { purseLeft: teamBudget(A.teams[id], s), spent: 0, count: 0, cat: {} };
+        t.maxBid = allMaxBids(t, s);
+        Object.entries(t).forEach(([k, v]) => { changes[`auctions/${code}/teams/${id}/${k}`] = v; });
+      });
+      // Auction order: category by category, players as listed (or shuffled) within each
+      let n = 0;
+      cats.forEach(c => {
+        const ids = players().filter(([, p]) => p.cat === c.id).map(([id]) => id);
+        if (s.order === "random") for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+        ids.forEach(id => {
+          changes[`auctions/${code}/players/${id}/order`] = ++n;
+          changes[`auctions/${code}/players/${id}/status`] = "pending";
+          changes[`auctions/${code}/players/${id}/rounds`] = 0;
+          changes[`auctions/${code}/players/${id}/soldTo`] = null;
+          changes[`auctions/${code}/players/${id}/price`] = null;
+        });
+      });
+      await update(ref(db), changes);
+    }
+
+    // ============================================================
+    // The queue: who comes up next, following each category's unsold rule
+    //   1. each category's players in order
+    //      (+ its unsold players straight after, if its rule says so)
+    //   2. then unsold players of "after all categories" categories
+    //   3. then wishlisted unsold players, most wanted first
+    //   Unsold players can always be called from the pool, any time.
+    // ============================================================
+    const catOf = p => catList(S()).find(c => c.id === p.cat) || { name: "?", unsold: "afterAll" };
+    const wish = pid => (A.wishCount && A.wishCount[pid]) || 0;
+
+    function queue() {
+      const cats = catList(S());
+      const P = players();
+      const fresh = cid => P.filter(([, p]) => p.cat === cid && p.status === "pending");
+      const unsoldOnce = cid => P.filter(([, p]) => p.cat === cid && p.status === "unsold" && (p.rounds || 0) === 1);
+      for (const c of cats) {
+        const f = fresh(c.id);
+        if (f.length) return { pid: f[0][0], label: c.name, left: f.length };
+        if (c.unsold === "afterCategory") {
+          const u = unsoldOnce(c.id);
+          if (u.length) return { pid: u[0][0], label: `${c.name} · unsold round`, left: u.length };
+        }
+      }
+      for (const c of cats) if (c.unsold === "afterAll") {
+        const u = unsoldOnce(c.id);
+        if (u.length) return { pid: u[0][0], label: `${c.name} · unsold round`, left: u.length };
+      }
+      const wished = P.filter(([id, p]) => p.status === "unsold" && (p.rounds || 0) === 1 && catOf(p).unsold === "wishlist" && wish(id) > 0)
+        .sort((a, b) => wish(b[0]) - wish(a[0]));
+      if (wished.length) return { pid: wished[0][0], label: "Wishlisted players", left: wished.length };
+      return null;
+    }
+
+    // ---------- the stage ----------
+    async function photoFor(pid) {
+      if (photos[pid] !== undefined) return photos[pid];
+      const snap = await get(ref(db, `auctionPhotos/${code}/${pid}`));
+      photos[pid] = snap.exists() ? snap.val() : "";
+      return photos[pid];
+    }
+
+    function renderStage() {
+      const live = L(), s = S();
+      const stage = $("stage");
+      const key = `${live.pid || ""}:${live.state}`;
+      const changed = key !== lastKey;
+
+      if (live.state === "idle" || !live.pid || !A.players[live.pid]) {
+        if (changed || true) {
+          const sold = players().filter(([, p]) => p.status === "sold").length;
+          const unsold = players().filter(([, p]) => p.status === "unsold").length;
+          const q = queue();
+          const first = !Object.keys(A.sales || {}).length && !players().some(([, p]) => p.status === "unsold");
+          const html = first && q ? `
+            <div class="idle">
+              <p class="bid-label">Tonight's contenders</p>
+              <h2 class="title">Welcome to <span>${safe(A.title || "the auction")}</span></h2>
+              <div class="parade">${teams().map(([id, t], k) => `<div class="pt" style="animation-delay:${k * 0.08}s">${crest(id, "xl")}${safe(t.name)}</div>`).join("")}</div>
+              <p class="lead">First up: <b>${safe(q.label)}</b>. Press <b>Next player</b> (or N) to open bidding.</p>
+            </div>` : `
+            <div class="idle">
+              <p class="bid-label">${q ? `Up next · ${safe(q.label)}` : "The queue is empty"}</p>
+              <h2 class="title">${q ? safe(A.players[q.pid].name) : unsold ? `${unsold} player${unsold === 1 ? "" : "s"} in the unsold pool` : "That's everyone!"}</h2>
+              <p class="lead">${pending().length} waiting · ${sold} sold · ${unsold} unsold</p>
+              <p class="lead">${q ? "Press <b>Next player</b> (or N) to open bidding." : unsold ? "Call players from the <b>unsold pool</b>, or <b>End auction</b> to see the final squads." : "Press <b>End auction</b> to see the final squads."}</p>
+            </div>`;
+          if (stage.dataset.idle !== html) { stage.innerHTML = html; stage.dataset.idle = html; if (changed) animate(stage); }
+        }
+        lastKey = key; lastSeq = -1;
+        return;
+      }
+
+      const p = A.players[live.pid];
+      const cat = catOf(p);
+      const cc = catColour(s, live.cat);
+      stage.dataset.idle = "";
+      stage.style.setProperty("--cc", cc);
+      if (changed && (live.pid !== lastKey.split(":")[0] || !stage.querySelector(".lot"))) {
+        stage.innerHTML = `
+          <p class="lot-count"><span class="dot" style="--c:${cc}"></span>${safe(cat.name)}${live.round > 1 ? " · unsold round" : ""} · bids go up by ${money(stepFor(live.cat, s), s)}</p>
+          <div class="lot">
+            <div class="pcard" style="--cc:${cc}">
+              <span class="pcard-cat">${safe(cat.name)}</span>
+              <div id="lotPhoto" class="pcard-init">${safe(initials(p.name))}</div>
+              <div class="pcard-foot"><b>${safe(p.name)}</b><span>Base ${money(live.base, s)}</span></div>
+            </div>
+            <div>
+              <span class="lot-cat" style="background:${cc};color:#000">${safe(cat.name)}</span>
+              <h2 class="lot-name">${safe(p.name)}</h2>
+              ${tagsHTML(p)}
+              <p class="lot-base">Base price <strong>${money(live.base, s)}</strong></p>
+            </div>
+          </div>
+          <div class="bid-zone">
+            <div>
+              <p class="bid-label" id="bidLabel">Current bid</p>
+              <p class="bid-amount" id="bidAmount"></p>
+              <div id="leader"></div>
+              <div class="heat"><span>Bidding war</span><div class="heat-bar"><i id="heatFill" style="width:0"></i></div><span id="heatNum">0 bids</span></div>
+            </div>
+            <div>
+              <div class="ring" id="ring">
+                <svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="prog" id="ringProg" cx="60" cy="60" r="52" stroke-dasharray="326.7" stroke-dashoffset="0"/></svg>
+                <span class="ring-num" id="ringNum"></span>
+              </div>
+              <p class="ring-note" id="ringNote"></p>
+            </div>
+          </div>
+          <ul class="history" id="history"></ul>`;
+        animate(stage);
+        photoFor(live.pid).then(src => {
+          if (src && L().pid === live.pid && $("lotPhoto")) $("lotPhoto").outerHTML = `<img id="lotPhoto" class="pcard-photo" src="${src}" alt="">`;
+        });
+        lastSeq = -1;
+      }
+
+      // bid, leader, history
+      const leader = live.team && A.teams[live.team];
+      $("bidLabel").textContent = live.team ? "Current bid" : "Opening bid";
+      const amt = $("bidAmount");
+      amt.textContent = money(live.amount, s);
+      if (live.seq !== lastSeq) {
+        if (lastSeq !== -1 && live.seq > lastSeq) { amt.classList.remove("bump"); void amt.offsetWidth; amt.classList.add("bump"); sounds.bid(); }
+        lastSeq = live.seq;
+      }
+      $("leader").innerHTML = leader
+        ? `<span class="leader" style="border-color:${safe(leader.color)}">${crest(live.team)}${safe(leader.name)}</span>`
+        : `<span class="leader none">No bids yet. First bid is ${money(live.base, s)}</span>`;
+      const allBids = Object.values((A.bids && A.bids[live.pid]) || {});
+      const bids = allBids.sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 6);
+      $("history").innerHTML = bids.map(b => {
+        const t = A.teams[b.team] || { name: "?", color: "#999" };
+        return `<li>${crest(b.team, "sm")}${safe(t.name)} <span class="amt">${money(b.amount, s)}</span></li>`;
+      }).join("");
+      $("heatFill").style.width = `${Math.min(100, allBids.length * 9)}%`;
+      $("heatNum").textContent = `${allBids.length} bid${allBids.length === 1 ? "" : "s"}${allBids.length >= 8 ? " 🔥" : ""}`;
+
+      // the sold / unsold moment
+      if (changed && (live.state === "sold" || live.state === "unsold")) {
+        stage.querySelector(".stamp-wrap")?.remove();
+        const wrap = document.createElement("div");
+        wrap.className = "stamp-wrap";
+        if (live.state === "sold" && leader) {
+          wrap.innerHTML = `<div class="stamp" style="--c:${safe(leader.color)}">${crest(live.team, "xl")}<div class="stamp-word">SOLD!</div><div class="stamp-sub">${safe(p.name)} → ${safe(leader.name)} · ${money(live.amount, s)}</div></div>`;
+          stage.appendChild(wrap);
+          const fl = document.createElement("div"); fl.className = "flash-bg"; stage.appendChild(fl); setTimeout(() => fl.remove(), 600);
+          confetti(stage, leader.color);
+          sounds.sold();
+          document.querySelector(`.trow[data-team="${live.team}"]`)?.classList.add("flash");
+        } else {
+          wrap.innerHTML = `<div class="stamp unsold"><div class="stamp-word">UNSOLD</div><div class="stamp-sub">No bids for ${safe(p.name)}</div></div>`;
+          stage.appendChild(wrap);
+          sounds.unsold();
+        }
+      }
+      if (live.state === "bidding" || live.state === "paused") stage.querySelector(".stamp-wrap")?.remove();
+      lastKey = key;
+      tick();
+    }
+
+    // ---------- countdown ----------
+    function tick() {
+      const live = L();
+      const ring = $("ring");
+      if (!ring || !live.timerMs) return;
+      let left = live.state === "paused" ? (live.pausedLeft || 0) : Math.max(0, endsAt(live) - serverNow());
+      if (live.state === "sold" || live.state === "unsold" || live.state === "closing") left = 0;
+      const frac = Math.max(0, Math.min(1, left / live.timerMs));
+      $("ringProg").style.strokeDashoffset = String(326.7 * (1 - frac));
+      const secs = Math.ceil(left / 1000);
+      $("ringNum").textContent = live.state === "sold" ? "🔨" : live.state === "unsold" ? "–" : secs;
+      $("ringNote").textContent = live.state === "paused" ? "Paused" : live.state === "bidding" ? "seconds left" : "";
+      ring.classList.toggle("low", live.state === "bidding" && secs <= 5);
+      if (live.state === "bidding" && secs <= 5 && secs > 0 && secs !== lastTick) { lastTick = secs; sounds.tick(); }
+      showGoing(live.state === "bidding" && live.team ? (secs <= 2 && secs > 0 ? "twice" : secs <= 4 && secs > 2 ? "once" : "") : "");
+      // Time's up: the host's screen closes the sale
+      if (live.state === "bidding" && left <= 0 && !closing) finalize(false);
+    }
+    setInterval(() => { if (A && A.status === "live") tick(); }, 200);
+
+    // "Going once… going twice…" banner over the stage
+    function showGoing(which) {
+      if (which === lastGoing) return;
+      lastGoing = which;
+      $("stage").querySelector(".going")?.remove();
+      if (!which) return;
+      const b = document.createElement("div");
+      b.className = `going ${which}`;
+      b.textContent = which === "once" ? "Going once…" : "Going twice…";
+      $("stage").appendChild(b);
+      sounds.going();
+    }
+
+    // ---------- teams board ----------
+    function renderBoard() {
+      const s = S(), live = L(), cats = catList(s), lim = squadLimits(s);
+      $("boardNote").textContent = `Squads of ${squadText(s)}`;
+      $("teamBoard").innerHTML = teams().map(([id, t]) => {
+        const full = (t.count || 0) >= lim.max;
+        const mb = live.cat && t.maxBid ? (t.maxBid[live.cat] || 0) : null;
+        return `
+          <div class="trow ${live.team === id && live.state !== "idle" ? "leading" : ""} ${full ? "full" : ""}" data-team="${id}" style="--c:${safe(t.color)}">
+            ${crest(id)}
+            <div>
+              <div class="tname">${safe(t.name)}</div>
+              <div class="tmeta">${t.count || 0} player${t.count === 1 ? "" : "s"}${mb !== null && ["bidding", "paused"].includes(live.state) ? ` · max bid ${money(mb, s)}` : ""}${full ? " · full" : ""}</div>
+              <div class="tcats">${cats.map(c => {
+                const n = (t.cat && t.cat[c.id]) || 0;
+                const cls = n >= catMax(c) ? "done" : n < c.min ? "short" : "ok";
+                return `<span class="tc ${cls}" style="--cc:${catColour(s, c.id)}" title="${safe(c.name)}: ${n} bought, needs ${c.min}${c.max ? "–" + c.max : "+"}">${safe(c.name.slice(0, 4))} ${n}/${c.min}${c.max ? "–" + c.max : "+"}</span>`;
+              }).join("")}</div>
+            </div>
+            <div class="tpurse">${money(purseLeftOf(t, s), s)}<small>of ${money(teamBudget(t, s), s)}</small></div>
+            <div class="purse-bar"><i style="width:${Math.max(0, Math.min(100, (purseLeftOf(t, s) / (teamBudget(t, s) || 1)) * 100))}%"></i></div>
+          </div>`;
+      }).join("");
+      renderPool();
+    }
+
+    // ---------- unsold pool (callable any time; wishlist counts are anonymous) ----------
+    function renderPool() {
+      const s = S();
+      const live = L();
+      const busy = ["bidding", "paused", "closing"].includes(live.state);
+      const unsold = players().filter(([, p]) => p.status === "unsold")
+        .sort((a, b) => wish(b[0]) - wish(a[0]) || (a[1].order || 0) - (b[1].order || 0));
+      $("poolNote").textContent = unsold.length ? `${unsold.length} player${unsold.length === 1 ? "" : "s"}` : "";
+      $("pool").innerHTML = unsold.length ? unsold.map(([id, p]) => {
+        const c = catOf(p);
+        return `<div class="pool-row">
+          <div class="grow"><b>${safe(p.name)}</b><div class="tmeta">${safe(c.name)} · ${c.unsold === "wishlist" ? "wishlist" : c.unsold === "afterCategory" ? "after category" : "after all"}${(p.rounds || 0) > 1 ? " · unsold twice" : ""}</div></div>
+          ${wish(id) ? `<span class="wish" title="Teams that wishlisted this player">♥ ${wish(id)}</span>` : ""}
+          <button class="btn btn-dark btn-sm" data-call="${id}" ${busy ? "disabled" : ""}>Call</button>
+        </div>`;
+      }).join("") : `<p class="muted" style="font-size:14px;margin:0">No unsold players yet.</p>`;
+    }
+
+    // ---------- controls ----------
+    function renderControls() {
+      const live = L(), s = S();
+      const onLot = ["bidding", "paused"].includes(live.state);
+      const q = queue();
+      $("nextBtn").disabled = onLot || live.state === "closing" || !q;
+      $("pickBtn").disabled = onLot || live.state === "closing" || !pending().length;
+      $("queueNote").textContent = q ? `Queue: ${q.label} · ${q.left} to go` : "Queue empty: call from the unsold pool or end the auction.";
+      $("pauseBtn").disabled = !onLot;
+      $("pauseBtn").textContent = live.state === "paused" ? "▶ Resume" : "⏸ Pause";
+      $("soldBtn").disabled = !onLot || !live.team;
+      $("unsoldBtn").disabled = !onLot;
+      $("restartBtn").disabled = !live.pid || live.state === "closing" || (A.players[live.pid] || {}).status === "sold";
+      $("undoBtn").disabled = !Object.keys(A.sales || {}).length || onLot;
+      const next = live.state === "bidding" ? nextBid(live, s) : 0;
+      $("qbRow").innerHTML = teams().map(([id, t]) => {
+        const can = live.state === "bidding" && live.team !== id && ((t.maxBid && t.maxBid[live.cat]) || 0) >= next;
+        return `<button class="qb" data-qb="${id}" style="--c:${safe(t.color)}" ${can ? "" : "disabled"}>${crest(id, "sm")}${safe(t.name)}${live.state === "bidding" ? ` · ${money(next, s)}` : ""}</button>`;
+      }).join("");
+    }
+
+    // ============================================================
+    // Actions
+    // ============================================================
+    async function startLot(pid) {
+      unlockAudio();
+      const p = A.players[pid], s = S();
+      if (!p) return;
+      const cat = catOf(p);
+      closing = false;
+      const timerMs = (s.timerSec || 20) * 1000;
+      await update(ref(db), {
+        [`auctions/${code}/bids/${pid}`]: null,
+        [`auctions/${code}/live`]: {
+          pid, cat: p.cat, round: (p.rounds || 0) + 1, state: "bidding", base: cat.base, amount: cat.base, team: "", seq: 0,
+          timerMs, clockFrom: serverNow() + 3000      // 3 extra seconds to read the name
+        }
+      });
+    }
+
+    function nextPlayer() {
+      const q = queue();
+      if (q) startLot(q.pid);
+    }
+
+    // The host places a bid for a team (paddle raised in the room)
+    async function hostBid(tid) {
+      const live = L(), s = S();
+      if (live.state !== "bidding" || live.team === tid) return;
+      const amount = nextBid(live, s);
+      const t = A.teams[tid];
+      const mb = (t.maxBid && t.maxBid[live.cat]) || 0;
+      if (mb < amount) return toast(`${t.name} can't bid ${money(amount, s)} (max ${money(mb, s)})`);
+      const key = push(aRef(`bids/${live.pid}`)).key;
+      await update(ref(db), {
+        [`auctions/${code}/live`]: { ...live, amount, team: tid, seq: (live.seq || 0) + 1, clockFrom: serverTimestamp() },
+        [`auctions/${code}/bids/${live.pid}/${key}`]: { team: tid, amount, at: serverTimestamp(), by: "host" }
+      });
+    }
+
+    // Close the current player: sold to the highest bidder, or unsold
+    async function finalize(forceUnsold) {
+      if (closing) return;
+      closing = true;
+      try {
+        await update(aRef("live"), { state: "closing" });            // phones can't bid any more
+        const live = (await get(aRef("live"))).val();
+        const s = S();
+        const rounds = ((A.players[live.pid] || {}).rounds || 0) + 1;
+        if (live.team && !forceUnsold) {
+          const t = (await get(aRef(`teams/${live.team}`))).val();
+          const cat = { ...(t.cat || {}) };
+          cat[live.cat] = (cat[live.cat] || 0) + 1;
+          const nt = { purseLeft: (t.purseLeft || 0) - live.amount, spent: (t.spent || 0) + live.amount, count: (t.count || 0) + 1, cat };
+          nt.maxBid = allMaxBids(nt, s);
+          const key = push(aRef("sales")).key;
+          const changes = {
+            [`auctions/${code}/players/${live.pid}/rounds`]: rounds,
+            [`auctions/${code}/wishCount/${live.pid}`]: null,
+            [`auctions/${code}/players/${live.pid}/status`]: "sold",
+            [`auctions/${code}/players/${live.pid}/soldTo`]: live.team,
+            [`auctions/${code}/players/${live.pid}/price`]: live.amount,
+            [`auctions/${code}/sales/${key}`]: { pid: live.pid, team: live.team, cat: live.cat, price: live.amount, at: serverTimestamp() },
+            [`auctions/${code}/live/state`]: "sold"
+          };
+          Object.entries(nt).forEach(([k, v]) => { changes[`auctions/${code}/teams/${live.team}/${k}`] = v; });
+          await update(ref(db), changes);
+        } else {
+          await update(ref(db), {
+            [`auctions/${code}/players/${live.pid}/status`]: "unsold",
+            [`auctions/${code}/players/${live.pid}/rounds`]: rounds,
+            [`auctions/${code}/live/state`]: "unsold"
+          });
+        }
+      } finally {
+        closing = false;
+      }
+    }
+
+    async function togglePause() {
+      const live = L();
+      if (live.state === "bidding") await update(aRef("live"), { state: "paused", pausedLeft: Math.max(0, endsAt(live) - serverNow()) });
+      else if (live.state === "paused") await update(aRef("live"), { state: "bidding", clockFrom: serverNow() - live.timerMs + Math.max(3000, live.pausedLeft || 0), pausedLeft: null });
+    }
+
+    async function undoLastSale() {
+      const sales = Object.entries(A.sales || {}).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
+      if (!sales.length) return;
+      const [key, sale] = sales[0];
+      const p = A.players[sale.pid] || {}, t = A.teams[sale.team] || {};
+      if (!await confirmBox("Undo the last sale?", `${p.name} to ${t.name} for ${money(sale.price, S())}. The money goes back and ${p.name} returns to the queue.`, { ok: "Undo sale", icon: "↩️" })) return;
+      const cat = { ...(t.cat || {}) };
+      const cid = sale.cat || p.cat;
+      cat[cid] = Math.max(0, (cat[cid] || 0) - 1);
+      const nt = { purseLeft: (t.purseLeft || 0) + sale.price, spent: Math.max(0, (t.spent || 0) - sale.price), count: Math.max(0, (t.count || 0) - 1), cat };
+      nt.maxBid = allMaxBids(nt, S());
+      const changes = {
+        [`auctions/${code}/sales/${key}`]: null,
+        [`auctions/${code}/players/${sale.pid}/rounds`]: Math.max(0, (p.rounds || 1) - 1),
+        [`auctions/${code}/players/${sale.pid}/status`]: "pending",
+        [`auctions/${code}/players/${sale.pid}/soldTo`]: null,
+        [`auctions/${code}/players/${sale.pid}/price`]: null
+      };
+      Object.entries(nt).forEach(([k, v]) => { changes[`auctions/${code}/teams/${sale.team}/${k}`] = v; });
+      if (L().pid === sale.pid) changes[`auctions/${code}/live`] = { state: "idle" };
+      await update(ref(db), changes);
+      toast("Sale undone");
+    }
+
+    async function endAuction() {
+      const left = pending().length;
+      if (!await confirmBox("End the auction?", left ? `${left} player${left === 1 ? " hasn't" : "s haven't"} been auctioned yet. The final squads will be shown.` : "Every player has been auctioned. The final squads will be shown.", { ok: "End auction", danger: !!left, icon: "🏁" })) return;
+      await update(ref(db), {
+        [`auctions/${code}/status`]: "ended",
+        [`auctions/${code}/live`]: { state: "idle" },
+        [`auctionsByOwner/${user.uid}/${code}/status`]: "ended"
+      });
+    }
+
+    function pickPlayer() {
+      const back = document.createElement("div");
+      back.className = "modal-back";
+      back.innerHTML = `
+        <section class="card modal">
+          <button class="icon-btn modal-x" aria-label="Close">✕</button>
+          <h2 class="title" style="font-size:28px">Choose the next player</h2>
+          <p class="hint">Players who haven't been auctioned yet. Unsold players are in the pool beside the teams.</p>
+          <input class="input" id="pickSearch" placeholder="Search by name or category" style="margin-top:12px">
+          <ul class="pick-list" id="pickList"></ul>
+        </section>`;
+      document.body.appendChild(back);
+      const draw = term => {
+        const t = term.trim().toLowerCase();
+        back.querySelector("#pickList").innerHTML = pending()
+          .filter(([, p]) => !t || `${p.name} ${catOf(p).name}`.toLowerCase().includes(t))
+          .map(([id, p]) => `<li><button data-pick="${id}"><span class="av">${safe(initials(p.name))}</span>
+            <span class="grow"><b>${safe(p.name)}</b> <span class="muted">· ${safe(catOf(p).name)}</span>${playerLine(p, S()) ? `<br><small class="muted">${safe(playerLine(p, S()))}</small>` : ""}</span>
+            <span>${money(catOf(p).base, S())}</span></button></li>`).join("") || `<li class="empty">No one matches.</li>`;
+      };
+      draw("");
+      back.querySelector("#pickSearch").oninput = e => draw(e.target.value);
+      back.querySelector("#pickSearch").focus();
+      back.addEventListener("click", e => {
+        const b = e.target.closest("[data-pick]");
+        if (b) { startLot(b.dataset.pick); back.remove(); }
+        if (e.target === back || e.target.closest(".modal-x")) back.remove();
+      });
+    }
+
+    $("nextBtn").onclick = nextPlayer;
+    $("pickBtn").onclick = pickPlayer;
+    $("pauseBtn").onclick = togglePause;
+    $("soldBtn").onclick = () => finalize(false);
+    $("unsoldBtn").onclick = async () => { if (!L().team || await confirmBox("Mark unsold?", "There are bids on this player. They'll be cleared and the player goes to the unsold pool.", { ok: "Mark unsold", danger: true })) finalize(true); };
+    $("restartBtn").onclick = async () => { if (await confirmBox("Restart bidding?", "Bidding on this player starts again from the base price.", { ok: "Restart", icon: "↺" })) startLot(L().pid); };
+    $("undoBtn").onclick = undoLastSale;
+    $("pool").addEventListener("click", e => { const b = e.target.closest("[data-call]"); if (b) startLot(b.dataset.call); });
+    $("endBtn").onclick = endAuction;
+    $("qbRow").addEventListener("click", e => { const b = e.target.closest("[data-qb]"); if (b) hostBid(b.dataset.qb); });
+
+    function toggleFull() {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen?.().catch(() => {});
+    }
+    $("fullBtn").onclick = toggleFull;
+
+    document.addEventListener("keydown", e => {
+      if (!A || A.status !== "live" || e.target.closest("input, textarea, select") || document.querySelector(".modal-back")) return;
+      const k = e.key.toLowerCase();
+      if (k === "n" || e.key === "ArrowRight") { if (!$("nextBtn").disabled) nextPlayer(); }
+      else if (k === "p") { if (!$("pauseBtn").disabled) togglePause(); }
+      else if (k === "s") { if (!$("soldBtn").disabled) finalize(false); }
+      else if (k === "u") { if (!$("unsoldBtn").disabled) $("unsoldBtn").click(); }
+      else if (k === "f") toggleFull();
+    });
+
+    // ============================================================
+    // Results
+    // ============================================================
+    function renderResults() {
+      $("roomGrid").hidden = true;
+      $("message").hidden = true;
+      $("statStrip").hidden = true;
+      const s = S();
+      const r = $("results");
+      if (r.dataset.shown !== "1") { sounds.intro(); r.dataset.shown = "1"; }
+      r.hidden = false;
+      // Awards
+      const all = sales();
+      const top = all.reduce((m, x) => (!m || x.price > m.price ? x : m), null);
+      const byTeam = teams().filter(([, t]) => (t.count || 0) > 0);
+      const spender = byTeam.reduce((m, e) => (!m || (e[1].spent || 0) > (m[1].spent || 0) ? e : m), null);
+      const saver = byTeam.reduce((m, e) => (!m || (e[1].purseLeft || 0) > (m[1].purseLeft || 0) ? e : m), null);
+      const war = Object.entries(A.bids || {}).map(([pid, b]) => [pid, Object.keys(b || {}).length]).sort((a, b) => b[1] - a[1])[0];
+      const award = (icon, label, main, sub, colour) => `
+        <div class="award" style="--c:${colour}"><div class="trophy">${icon}</div><span>${label}</span><b>${main}</b><small>${sub}</small></div>`;
+      const awards = [
+        top && award("🏆", "Record signing", safe((A.players[top.pid] || {}).name), `${money(top.price, s)} · ${safe((A.teams[top.team] || {}).name)}`, "#FFC53D"),
+        spender && award("💰", "Big spender", safe(spender[1].name), `spent ${money(spender[1].spent, s)}`, spender[1].color),
+        saver && saver !== spender && award("🧠", "Smart money", safe(saver[1].name), `${money(saver[1].purseLeft, s)} left in the bank`, saver[1].color),
+        war && war[1] > 1 && award("🔥", "Fiercest bidding war", safe((A.players[war[0]] || {}).name), `${war[1]} bids`, "#FF3D71")
+      ].filter(Boolean).join("");
+
+      const squads = teams().map(([id, t]) => {
+        const mine = players().filter(([, p]) => p.soldTo === id && p.status === "sold")
+          .sort((a, b) => catList(s).findIndex(c => c.id === a[1].cat) - catList(s).findIndex(c => c.id === b[1].cat));
+        const missing = catList(s).filter(c => ((t.cat && t.cat[c.id]) || 0) < c.min).map(c => `${c.name} ${(t.cat && t.cat[c.id]) || 0}/${c.min}`);
+        return `
+          <div class="squad" style="--c:${safe(t.color)}">
+            <div class="squad-head">${crest(id, "lg")}<div><h3>${safe(t.name)}</h3><span class="muted">${mine.length} player${mine.length === 1 ? "" : "s"} · spent ${money(t.spent || 0, s)} · ${money(purseLeftOf(t, s), s)} left</span></div></div>
+            ${missing.length ? `<p class="short-note">Short of minimum: ${safe(missing.join(", "))}</p>` : ""}
+            <ul>${mine.map(([, p]) => `<li><span>${safe(p.name)}<span class="cat">${safe(catOf(p).name)}</span></span><span>${money(p.price, s)}</span></li>`).join("") || `<li><span class="muted">No players</span><span></span></li>`}</ul>
+          </div>`;
+      }).join("");
+      const unsold = players().filter(([, p]) => p.status !== "sold");
+      r.innerHTML = `
+        <div class="finale-hero">
+          <p class="bid-label">The hammer has fallen</p>
+          <h2 class="title">Squads <span>revealed</span></h2>
+          <div class="row" style="justify-content:center;margin-top:14px">
+            <button id="csvBtn" class="btn btn-sun">Download results (.csv)</button>
+            <button id="reopenBtn" class="btn btn-dark">Reopen auction</button>
+          </div>
+        </div>
+        ${awards ? `<div class="awards">${awards}</div>` : ""}
+        <div class="results-grid">${squads}</div>
+        ${unsold.length ? `<h3 class="section-title">Not sold (${unsold.length})</h3>
+          <p class="muted">${unsold.map(([, p]) => safe(p.name)).join(" · ")}</p>` : ""}`;
+      animate(r);
+      $("csvBtn").onclick = () => {
+        const rows = [["Team", "Player", "Details", "Category", "Price", "Base price"]];
+        teams().forEach(([id, t]) => players().filter(([, p]) => p.soldTo === id && p.status === "sold")
+          .forEach(([, p]) => rows.push([t.name, p.name, playerLine(p, s), catOf(p).name, p.price, catOf(p).base])));
+        unsold.forEach(([, p]) => rows.push(["(not sold)", p.name, playerLine(p, s), catOf(p).name, "", catOf(p).base]));
+        rows.push([]);
+        rows.push(["Team", "Players", "Spent", "Left", ...catList(s).map(c => c.name)]);
+        teams().forEach(([id, t]) => rows.push([t.name, t.count || 0, t.spent || 0, purseLeftOf(t, s), ...catList(s).map(c => (t.cat && t.cat[c.id]) || 0)]));
+        downloadCSV(toCSV(rows), `${A.title || "auction"}-results`);
+      };
+      $("reopenBtn").onclick = async () => {
+        if (!await confirmBox("Reopen the auction?", "Squads and budgets stay as they are.", { ok: "Reopen", icon: "🔓" })) return;
+        await update(ref(db), { [`auctions/${code}/status`]: "live", [`auctionsByOwner/${user.uid}/${code}/status`]: "live" });
+      };
+    }
+
+    // Teams can ask to change their name or picture; the host approves or rejects
+    function renderRequests() {
+      const reqs = Object.entries(A.teamRequests || {}).filter(([id]) => A.teams && A.teams[id]);
+      $("reqBtn").hidden = !reqs.length;
+      $("reqCount").textContent = reqs.length;
+      const open = document.getElementById("reqModal");
+      if (open) drawRequests(open);
+    }
+
+    function openRequests() {
+      const back = document.createElement("div");
+      back.className = "modal-back";
+      back.id = "reqModal";
+      back.innerHTML = `<section class="card modal"><button class="icon-btn modal-x" aria-label="Close">✕</button>
+        <h2 class="title" style="font-size:36px">Team <span>requests</span></h2><div id="reqList" style="display:grid;gap:10px;margin-top:14px"></div></section>`;
+      document.body.appendChild(back);
+      drawRequests(back);
+      back.addEventListener("click", async e => {
+        if (e.target === back || e.target.closest(".modal-x")) { back.remove(); return; }
+        const ok = e.target.closest("[data-approve]"), no = e.target.closest("[data-reject]");
+        if (ok) await approveRequest(ok.dataset.approve);
+        if (no) await update(ref(db), { [`auctions/${code}/teamRequests/${no.dataset.reject}`]: null });
+      });
+    }
+
+    function drawRequests(back) {
+      const reqs = Object.entries(A.teamRequests || {}).filter(([id]) => A.teams && A.teams[id]);
+      const list = back.querySelector("#reqList");
+      if (!reqs.length) { list.innerHTML = `<p class="empty">No requests waiting.</p>`; return; }
+      list.innerHTML = reqs.map(([id, r]) => {
+        const t = A.teams[id];
+        const newTeam = { ...t, name: r.name || t.name };
+        return `<div class="req">
+          ${crest(id, "lg")}
+          <div class="req-change">
+            <span class="req-arrow">→</span>
+            ${crestHTML(newTeam, r.logo || logoOf(logos, id), "lg")}
+            <div>${r.name && r.name !== t.name ? `<div class="req-old">${safe(t.name)}</div><div class="req-name">${safe(r.name)}</div>` : `<div class="req-name">${safe(t.name)}</div>`}
+              <div class="muted" style="font-size:13px">${[r.name && r.name !== t.name ? "new name" : "", r.logo ? "new picture" : ""].filter(Boolean).join(" + ")}</div></div>
+          </div>
+          <div class="row"><button class="btn btn-sun btn-sm" data-approve="${id}">Approve</button><button class="btn btn-danger btn-sm" data-reject="${id}">Reject</button></div>
+        </div>`;
+      }).join("");
+    }
+
+    async function approveRequest(id) {
+      const r = (A.teamRequests || {})[id];
+      if (!r) return;
+      const changes = { [`auctions/${code}/teamRequests/${id}`]: null };
+      if (r.name) changes[`auctions/${code}/teams/${id}/name`] = String(r.name).slice(0, 24);
+      if (r.logo) {
+        await set(ref(db, `auctionPhotos/${code}/t_${id}`), r.logo);
+        changes[`auctions/${code}/teams/${id}/logoV`] = Date.now();
+      }
+      await update(ref(db), changes);
+      toast("Approved");
+    }
+    $("reqBtn").onclick = openRequests;
+
+    function toast(text) {
+      const t = document.createElement("div");
+      t.className = "toast";
+      t.textContent = text;
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 2400);
+    }
+
+    start();
+  </script>
+</body>
+</html>

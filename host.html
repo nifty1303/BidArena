@@ -949,8 +949,8 @@
       const head = `<th>#</th><th>Photo</th><th>Name</th><th>Age</th>${S ? `<th>${safe(S.roleLabel)}</th><th>${safe(S.subLabel)}</th>${S.extra.map(x => `<th>${safe(x.label)}</th>`).join("")}` : `<th>Info</th>`}<th>Special attributes</th><th>Favourite player</th><th>Category</th><th>Status</th><th></th>`;
       const rows = list.map(([id, p], k) => {
         const c = cats.find(x => x.id === p.cat);
-        return `<tr class="${c ? "" : "no-cat"}">
-          <td>${k + 1}</td>
+        return `<tr class="${c ? "" : "no-cat"}" data-row="${id}">
+          <td class="drag-cell"><button type="button" class="drag-handle" data-drag="${id}" title="Drag to reorder (or focus and use ↑ ↓)" aria-label="Move ${safe(p.name)}">⠿</button><span>${k + 1}</span></td>
           <td>${p.hasPhoto
             ? `<label title="Change photo"><img class="thumb" data-photo-of="${id}" alt=""><input type="file" accept="image/*" data-photo="${id}" hidden></label>`
             : `<label class="thumb-add" title="Add photo">+<input type="file" accept="image/*" data-photo="${id}" hidden></label>`}</td>
@@ -969,7 +969,7 @@
         </tr>`;
       }).join("");
       const noPhoto = list.filter(([, p]) => !p.hasPhoto).length;
-      const listSec = sec("slate", "📋", `Player list <span class="muted" style="font-size:18px">${list.length}</span>`, `Edits save as you type. Click + to add a photo.${list.length ? ` <b>${noPhoto ? `${noPhoto} still without a photo.` : "Every player has a photo ✓"}</b>` : ""}`,
+      const listSec = sec("slate", "📋", `Player list <span class="muted" style="font-size:18px">${list.length}</span>`, `Edits save as you type. Drag ⠿ to set the auction order (within each category). Click + to add a photo.${list.length ? ` <b>${noPhoto ? `${noPhoto} still without a photo.` : "Every player has a photo ✓"}</b>` : ""}`,
         list.length ? `<div class="row" style="justify-content:flex-end"><button id="shuffleBtn" class="btn btn-light btn-sm">Shuffle the order</button></div>
           <div class="table-scroll"><table class="players-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`
           : `<div class="empty">No players yet. Import a file or add them one by one.</div>`);
@@ -1151,6 +1151,71 @@
         : [["Player One", 24, "", "Captain", "", catList(A.settings)[0]?.name || ""], ["Player Two", 19, "", "", "", catList(A.settings)[1]?.name || ""]];
       downloadCSV(toCSV([head, ...eg]), `${sportName(sport)} players template`);
     }
+
+    // ---------- reorder players: drag the ⠿ handle, or focus it and press ↑ / ↓ ----------
+    async function movePlayer(id, toIndex) {
+      const ids = playerList().map(([pid]) => pid);
+      const from = ids.indexOf(id);
+      if (from < 0 || toIndex === from) return;
+      ids.splice(from, 1);
+      ids.splice(Math.max(0, Math.min(ids.length, toIndex)), 0, id);
+      const changes = {};
+      ids.forEach((pid, k) => { if (A.players[pid].order !== k + 1) { A.players[pid].order = k + 1; changes[`auctions/${code}/players/${pid}/order`] = k + 1; } });
+      renderPlayers();
+      document.querySelector(`[data-drag="${id}"]`)?.focus({ preventScroll: true });
+      if (Object.keys(changes).length) {
+        $("saveNote").textContent = "Saving…";
+        try { await update(ref(db), changes); $("saveNote").textContent = "Saved"; }
+        catch (e) { $("saveNote").textContent = "Couldn't save"; $("editErr").textContent = e.message; }
+      }
+    }
+    let dragId = null;
+    const clearDropMarks = () => document.querySelectorAll(".drop-before, .drop-after").forEach(r => r.classList.remove("drop-before", "drop-after"));
+    $("pane-players").addEventListener("mousedown", e => {
+      const h = e.target.closest("[data-drag]");
+      if (h) h.closest("tr").draggable = true;          // only the handle starts a drag, so inputs stay usable
+    });
+    $("pane-players").addEventListener("dragstart", e => {
+      const tr = e.target.closest && e.target.closest("tr[data-row]");
+      if (!tr) return;
+      dragId = tr.dataset.row;
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", dragId); } catch (err) {}
+      requestAnimationFrame(() => tr.classList.add("dragging"));
+    });
+    $("pane-players").addEventListener("dragover", e => {
+      if (!dragId) return;
+      const tr = e.target.closest("tr[data-row]");
+      if (!tr) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const r = tr.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2;
+      clearDropMarks();
+      if (tr.dataset.row !== dragId) tr.classList.add(after ? "drop-after" : "drop-before");
+    });
+    $("pane-players").addEventListener("drop", e => {
+      if (!dragId) return;
+      const tr = e.target.closest("tr[data-row]");
+      e.preventDefault();
+      const id = dragId;
+      if (tr && tr.dataset.row !== id) {
+        const ids = playerList().map(([pid]) => pid).filter(pid => pid !== id);
+        const r = tr.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2;
+        movePlayer(id, ids.indexOf(tr.dataset.row) + (after ? 1 : 0));
+      }
+    });
+    $("pane-players").addEventListener("dragend", e => {
+      dragId = null;
+      clearDropMarks();
+      document.querySelectorAll("tr[data-row]").forEach(r => { r.classList.remove("dragging"); r.draggable = false; });
+    });
+    $("pane-players").addEventListener("keydown", e => {
+      const h = e.target.closest("[data-drag]");
+      if (!h || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
+      e.preventDefault();
+      const ids = playerList().map(([pid]) => pid), i = ids.indexOf(h.dataset.drag);
+      movePlayer(h.dataset.drag, i + (e.key === "ArrowUp" ? -1 : 1));
+    });
 
     async function shuffle() {
       const ids = playerList().filter(([, p]) => p.status !== "sold").map(([id]) => id);

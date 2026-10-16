@@ -116,6 +116,7 @@
       });
     }
     function stopAll() {
+      clearViewer();
       bidBarOff();
       [stopListen, stopWish, stopMember].forEach(f => f && f());
       stopListen = stopWish = stopMember = null;
@@ -134,13 +135,34 @@
       set(r, serverTimestamp()).catch(() => {});
     }
 
+    // ---------- viewers: watch under a name, so the host sees who's watching ----------
+    let viewerKey = "";
+    const myName = () => { try { return localStorage.getItem("bidderName") || ""; } catch (e) { return ""; } };
+    function setViewer(force = false) {
+      if (!code || !me) return;
+      if (myTeam || myMember) return clearViewer();          // bidders are counted separately
+      const name = myName();
+      if (!name) return;
+      const key = `${code}/${me.uid}/${name}`;
+      if (key === viewerKey && !force) return;
+      viewerKey = key;
+      const r = ref(db, `auctionViewers/${code}/${me.uid}`);
+      onDisconnect(r).remove().catch(() => {});
+      set(r, { name, at: serverTimestamp() }).catch(() => {});
+    }
+    function clearViewer() {
+      if (!viewerKey || !code || !me) return;
+      viewerKey = "";
+      set(ref(db, `auctionViewers/${code}/${me.uid}`), null).catch(() => {});
+    }
+
     // Connection lost / back: banner, and bidding pauses on this phone until it's back
     let isOnline = true, offTimer = null;
     watchConnection(on => {
       isOnline = on;
       clearTimeout(offTimer);
-      if (on) { $("connBar").hidden = true; setPresence(true); }
-      else { presenceKey = ""; offTimer = setTimeout(() => { if (!isOnline) $("connBar").hidden = false; }, 2000); }
+      if (on) { $("connBar").hidden = true; setPresence(true); setViewer(true); }
+      else { presenceKey = ""; viewerKey = ""; offTimer = setTimeout(() => { if (!isOnline) $("connBar").hidden = false; }, 2000); }
     });
 
     // Signed-in hosts get a link to their profile and auctions
@@ -321,7 +343,7 @@
             <input id="pinIn" class="input big" maxlength="4" inputmode="numeric" autocomplete="off" placeholder="••••">`}
           <button id="teamGo" class="btn btn-sun btn-block btn-lg" style="margin-top:12px" ${preset ? "" : "disabled"}>${preset ? "Ask to bid" : "Choose your team"}</button>
           <p id="seatErr" class="err">${safe(message)}</p>
-          <p class="hint" style="text-align:center">The host approves every bidder. Each person needs their own name${preset ? "" : ", and the PIN comes from the host"}.</p>
+          <p class="hint" style="text-align:center">Watching only? Type your name and tap <b>Just watch</b>. The host approves every bidder. Each person needs their own name${preset ? "" : ", and the PIN comes from the host"}.</p>
           <button id="watchGo" class="btn btn-light btn-block" style="margin-top:14px">Just watch</button>
         </div>`;
       animate(view);
@@ -342,7 +364,12 @@
       };
       $("teamGo").onclick = go;
       view.querySelectorAll("#nameIn, #pinIn").forEach(i => i.addEventListener("keydown", e => { if (e.key === "Enter") go(); }));
-      $("watchGo").onclick = () => { myTeam = null; saveSeat(); listen(); };
+      $("watchGo").onclick = () => {
+        const name = cleanName($("nameIn").value);
+        if (name.length < 2) { $("seatErr").textContent = "Type your name to watch (at least 2 letters)."; $("nameIn").focus(); return; }
+        try { localStorage.setItem("bidderName", name); } catch (e) {}
+        myTeam = null; saveSeat(); listen();
+      };
     }
 
     // Ask to bid: the database checks the PIN and that the name is free; the host then approves
@@ -390,6 +417,7 @@
         if (myTeam && !(A.teams || {})[myTeam]) myTeam = null;
         render();
         refreshBanners();
+        setViewer();
         loadTeamLogos(code, A.teams, logos).then(changed => { if (changed) { $("liveShell")?.remove(); lastKey = ""; render(); } });
       });
     }
@@ -416,7 +444,7 @@
                    <div class="stat"><b id="stSquad"></b><span>Squad</span></div>
                  </div>
                  <div id="myCats" class="my-cats"></div>`
-               : `<div class="team-head" style="--c:var(--accent)"><div class="grow"><h2>${safe(A.title || "Auction")}</h2><p>Watching · <button class="link-btn" id="leaveBtn">Join a team</button></p></div></div>
+               : `<div class="team-head" style="--c:var(--accent)"><div class="grow"><h2>${safe(A.title || "Auction")}</h2><p>Watching as <b>${safe(myName())}</b> · <button class="link-btn" id="leaveBtn">Join a team</button></p></div></div>
                   <div id="plot" class="plot" style="margin-top:10px"></div>`}
           ${t ? `<h3 class="section-title">Your squad</h3><ul id="mySquad" class="mini-squad"></ul>
                  <h3 class="section-title">Unsold players <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:600">· tap ♡ to wishlist (only your team sees it)</span></h3>
@@ -789,6 +817,8 @@
             code = saved.code; A = snap.val();
             myMember = (await get(memberRef())).val();
             myTeam = myMember && A.teams && A.teams[myMember.team] ? myMember.team : null;
+            applySportTheme(A.settings && A.settings.sport);
+            if (!myTeam && !myName()) { await refreshBanners(); showSeatForm("Type your name to watch, or ask to bid for your team."); return; }
             listen(); return;
           }
         } catch (e) {}

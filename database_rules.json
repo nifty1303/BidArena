@@ -754,6 +754,16 @@
         }
       }
     },
+    "auctionViewers": {
+      "$aid": {
+        ".read": "auth != null && (root.child('auctions').child($aid).child('owner').val() === auth.uid || root.child('auctions').child($aid).child('editors').child(auth.uid).exists())",
+        ".write": "auth != null && (root.child('auctions').child($aid).child('owner').val() === auth.uid || root.child('auctions').child($aid).child('editors').child(auth.uid).exists())",
+        "$uid": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.hasChildren(['name', 'at']) && newData.child('name').isString() && newData.child('name').val().length >= 1 && newData.child('name').val().length <= 24 && newData.child('at').isNumber()"
+        }
+      }
+    },
     "auctionSecrets": {
       "$aid": {
         ".read": "auth != null && (root.child('auctions').child($aid).child('owner').val() === auth.uid || root.child('auctions').child($aid).child('editors').child(auth.uid).exists())",

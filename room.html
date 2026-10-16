@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700;800&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body data-sport="home">
   <main class="wrap room">
@@ -16,6 +17,8 @@
       <h1 id="roomTitle" class="room-title"></h1>
       <span id="livePill" class="pill live" hidden>● Live</span>
       <span id="joinChip" class="join-chip" hidden></span>
+      <button id="watchBtn" class="btn btn-dark req-btn" title="Who's watching">👀 <span id="watchCount">0</span> watching</button>
+      <button id="qrBtn" class="btn btn-dark" title="Show the viewer QR code big (Q)" aria-label="Show QR code">▦</button>
       <button id="biddersBtn" class="btn btn-dark req-btn" title="Approve who can bid">👥 Bidders<span class="badge" id="bidderCount" hidden></span></button>
       <button id="reqBtn" class="btn btn-dark req-btn" hidden>Team requests<span class="badge" id="reqCount"></span></button>
       <a id="setupLink" class="btn btn-dark" href="host.html">⚙ Setup</a>
@@ -29,6 +32,7 @@
     <div id="roomGrid" class="room-grid" hidden>
       <div>
         <section id="stage" class="stage"></section>
+        <div id="nextUp" class="next-up" hidden></div>
 
         <!-- Host controls -->
         <div id="controls" class="controls">
@@ -49,11 +53,12 @@
           <div id="qbRow" class="qb-row"></div>
         </div>
         <div class="ticker" id="ticker" hidden><span class="ticker-label">🔨 Sold</span><div class="ticker-track" id="tickerTrack"></div></div>
-        <p class="kbd">Shortcuts: <b>N</b> next · <b>P</b> or <b>Space</b> pause / resume · <b>T</b> +10s · <b>S</b> sold · <b>U</b> unsold · <b>F</b> full screen</p>
+        <p class="kbd">Shortcuts: <b>N</b> next · <b>P</b> or <b>Space</b> pause / resume · <b>T</b> +10s · <b>S</b> sold · <b>U</b> unsold · <b>F</b> full screen · <b>Q</b> big QR code</p>
         <p id="queueNote" class="kbd" style="margin-top:6px"></p>
       </div>
 
       <aside class="board">
+        <div class="qr-card"><div class="qr" id="qrSide"></div><div><b>Scan to watch live</b><span id="qrSideUrl"></span></div></div>
         <div class="board-head"><h3>Teams</h3><span id="boardNote" class="muted" style="font-size:13px"></span></div>
         <div id="teamBoard" class="board"></div>
         <div class="board-head" style="margin-top:14px"><h3>Unsold pool</h3><span id="poolNote" class="muted" style="font-size:13px"></span></div>
@@ -63,6 +68,7 @@
 
     <section id="results" hidden></section>
   </main>
+  <div id="qrBig" class="qr-big" hidden><div class="qr-big-card"><p class="eyebrow">Watch live on your phone</p><div class="qr" id="qrBigCode"></div><p class="qr-big-url" id="qrBigUrl"></p><p class="muted">Press Q or click to close</p></div></div>
   <div id="connBar" class="conn-bar" hidden>⚠️ Connection lost. Reconnecting… The timer won't close a player until you're back.</div>
 
   <script type="module">
@@ -109,6 +115,7 @@
       }
       $("setupLink").href = `host.html?a=${code}`;
       watchBidderRequests();
+      watchAudience();
       onValue(aRef(), async snap => {
         A = snap.val();
         if (!A) { message(`<h2 class="title">Auction not found</h2><p class="lead">It may have been deleted.</p>`); return; }
@@ -133,6 +140,46 @@
       $("stage").dataset.idle = "";
       if (A.status === "live") renderStage();
     }
+
+    // ---------- viewer QR (no team PINs: safe to show on the big screen) ----------
+    const viewerLink = () => `${new URL("./", location.href).href}?a=${code}`;
+    const shortUrl = () => new URL("./", location.href).href.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    function drawQR(el, size) {
+      if (!el || el.dataset.qr === viewerLink() || !window.QRCode) return;
+      el.innerHTML = "";
+      new QRCode(el, { text: viewerLink(), width: size, height: size, colorDark: "#13262A", colorLight: "#ffffff" });
+      el.dataset.qr = viewerLink();
+    }
+    function toggleBigQR(on = $("qrBig").hidden) {
+      $("qrBig").hidden = !on;
+      if (on) { drawQR($("qrBigCode"), Math.min(520, Math.round(innerHeight * 0.55))); $("qrBigUrl").innerHTML = `${safe(shortUrl())} · code <b>${code}</b>`; }
+    }
+    $("qrBtn").onclick = () => toggleBigQR();
+    $("qrBig").onclick = () => toggleBigQR(false);
+
+    // ---------- who's watching (viewers give a name) and which bidders are connected ----------
+    let viewers = {}, onlineBidders = {};
+    function watchAudience() {
+      onValue(ref(db, `auctionViewers/${code}`), snap => { viewers = snap.val() || {}; drawAudience(); }, () => {});
+      onValue(ref(db, `auctionOnline/${code}`), snap => { onlineBidders = snap.val() || {}; drawAudience(); }, () => {});
+    }
+    function drawAudience() {
+      $("watchCount").textContent = Object.keys(viewers).length;
+      const box = $("audienceBox");
+      if (!box) return;
+      const names = Object.values(viewers).map(v => v.name).sort((a, b) => a.localeCompare(b));
+      box.innerHTML = `<p><b>${names.length}</b> watching · <b>${Object.keys(onlineBidders).length}</b> bidder phone${Object.keys(onlineBidders).length === 1 ? "" : "s"} connected</p>
+        <div class="audience">${names.map(n => `<span class="tag">👀 ${safe(n)}</span>`).join("") || `<p class="muted">No one is watching yet. Show the QR code so people can scan it.</p>`}</div>`;
+    }
+    $("watchBtn").onclick = () => {
+      const back = document.createElement("div");
+      back.className = "modal-back";
+      back.innerHTML = `<section class="card modal"><button class="icon-btn modal-x" aria-label="Close">✕</button>
+        <h2 class="title" style="font-size:36px">Who's <span>watching</span></h2><div id="audienceBox" style="margin-top:10px"></div></section>`;
+      document.body.appendChild(back);
+      drawAudience();
+      back.addEventListener("click", e => { if (e.target === back || e.target.closest(".modal-x")) back.remove(); });
+    };
 
     // ---------- bidders (team phones ask, the host approves) ----------
     let bidderInfo = { pending: 0, approved: 0 }, seenPending = null;
@@ -188,6 +235,8 @@
       const base = new URL("./", location.href).href;
       $("joinChip").innerHTML = `<span class="jc-url">Join at<br><b>${safe(base.replace(/^https?:\/\//, "").replace(/\/$/, ""))}</b></span><strong>${code}</strong>`;
       $("joinChip").hidden = false;
+      drawQR($("qrSide"), 132);
+      $("qrSideUrl").innerHTML = `${safe(shortUrl())} · code <b>${code}</b>`;
 
       renderRequests();
       $("livePill").hidden = A.status !== "live";
@@ -252,12 +301,14 @@
           <a class="btn btn-light btn-block" href="host.html?a=${code}" style="margin-top:12px">Fix in setup</a>`
           : `<p class="hint">Players are auctioned category by category. Starting gives every team its budget (${money(s.purse, s)} unless you set a different one in Teams). Teams can join now with their links.</p>
              <button id="goLive" class="btn btn-sun btn-block btn-lg" style="margin-top:16px">Start the auction ▶</button>`}
+        <div class="qr-start"><div class="qr" id="qrStart"></div><div><b>Scan to watch live</b><p class="muted" style="margin:4px 0 0">${safe(shortUrl())} · code <b>${code}</b><br>Viewers type their name and watch. Team links stay private in Setup.</p></div></div>
         <div class="row" style="margin-top:14px;justify-content:space-between;align-items:center">
           <span>👥 Bidders: <span id="bidderSummary">${bidderSummaryHTML()}</span></span>
           <button class="btn btn-light btn-sm" id="startBidders">Approve bidders</button>
         </div>
         ${s.fairForced ? `<p class="hint">⚖️ Fair price is on: a player only one team can still buy goes to that team at the lowest price paid in that category.</p>` : ""}`);
       $("startBidders").onclick = openBidders;
+      drawQR($("qrStart"), 150);
       const go = $("goLive");
       if (go) go.onclick = goLive;
     }
@@ -336,9 +387,9 @@
     const catOf = p => catList(S()).find(c => c.id === p.cat) || { name: "?", unsold: "afterAll" };
     const wish = pid => (A.wishCount && A.wishCount[pid]) || 0;
 
-    function queue() {
+    function queue(skip = "") {
       const cats = catList(S());
-      const P = players();
+      const P = players().filter(([id]) => id !== skip);
       const fresh = cid => P.filter(([, p]) => p.cat === cid && p.status === "pending");
       const unsoldOnce = cid => P.filter(([, p]) => p.cat === cid && p.status === "unsold" && (p.rounds || 0) === 1);
       for (const c of cats) {
@@ -571,6 +622,11 @@
       $("nextBtn").disabled = onLot || live.state === "closing" || !q;
       $("pickBtn").disabled = onLot || live.state === "closing" || !pending().length;
       $("queueNote").textContent = q ? `Queue: ${q.label} · ${q.left} to go` : "Queue empty: call from the unsold pool or end the auction.";
+      // white "Next up" line under the stage: the player after the one on screen
+      const nx = onLot || live.state === "closing" || ["sold", "unsold"].includes(live.state) ? queue(live.pid) : q;
+      const np = nx && A.players[nx.pid];
+      $("nextUp").hidden = !np;
+      if (np) $("nextUp").innerHTML = `<span class="nu-label">Next up</span><b>${safe(np.name)}</b><span class="nu-cat">${safe(nx.label)}${positionOf(np, s) ? ` · ${safe(positionOf(np, s))}` : ""}</span>`;
       $("pauseBtn").disabled = !onLot;
       $("pauseBtn").textContent = live.state === "paused" ? "▶ Resume timer" : "⏸ Pause timer";
       $("pauseBtn").className = `btn btn-lg ${live.state === "paused" ? "btn-sun" : "btn-dark"}`;
@@ -815,6 +871,7 @@
       else if (k === "s") { if (!$("soldBtn").disabled) finalize(false); }
       else if (k === "u") { if (!$("unsoldBtn").disabled) $("unsoldBtn").click(); }
       else if (k === "f") toggleFull();
+      else if (k === "q") toggleBigQR();
     });
 
     // ============================================================

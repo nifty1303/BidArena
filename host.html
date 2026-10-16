@@ -38,6 +38,11 @@
       <div class="card"><ul id="auctionList" class="list"></ul></div>
     </section>
 
+    <!-- My profile -->
+    <section id="profileView" hidden>
+      <div class="card profile-card" id="profileCard"></div>
+    </section>
+
     <!-- Setting up one auction -->
     <section id="editView" hidden>
       <div class="ed-top">
@@ -76,7 +81,7 @@
       catColour, crestHTML, loadTeamLogos, logoOf,
       CURRENCIES, SPORTS, sportOf, sportName, sportIcon, schemaFor, sportDefaults, applySportTheme, mountSportPicker,
       readSheetFile, norm, matchRole, matchSub, matchHand, cleanAge,
-      dialog, alertBox, confirmBox, copyText, teamBudget, allMaxBids, compressBanner, loadBanners
+      dialog, alertBox, confirmBox, copyText, teamBudget, allMaxBids, compressBanner, loadBanners, mountBidders, initials
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction setup");
@@ -89,8 +94,9 @@
     let shared = {};           // teams whose link the host has copied
     const logos = {};          // team pictures
     let tab = "basics";
+    let biddersMount = null;    // live list of bidders on the Share tab
 
-    const views = ["gate", "listView", "editView"];
+    const views = ["gate", "listView", "editView", "profileView"];
     const show = id => views.forEach(v => { $(v).hidden = v !== id; if (v === id) animate($(v)); });
     const locked = () => A && A.status !== "setup";    // once live, money rules can't change
 
@@ -120,16 +126,21 @@
         };
         return;
       }
-      $("who").innerHTML = `${safe(user.displayName || user.email)} · <button class="link-btn" id="outBtn">Sign out</button>`;
+      $("who").innerHTML = `<button class="acct-chip" id="profBtn" title="My profile">${user.photoURL ? `<img src="${safe(user.photoURL)}" alt="" referrerpolicy="no-referrer">` : `<span>${safe(initials(user.displayName || user.email))}</span>`}<b>${safe(user.displayName || user.email)}</b></button>
+        <button class="link-btn" id="listBtn">My auctions</button> · <button class="link-btn" id="outBtn">Sign out</button>`;
       $("outBtn").onclick = async () => { await signOutUser(); location.href = "host.html"; };
-      const want = new URLSearchParams(location.search).get("a");
-      if (want) openAuction(want); else showList();
+      $("profBtn").onclick = showProfile;
+      $("listBtn").onclick = showList;
+      const q = new URLSearchParams(location.search);
+      if (q.get("view") === "profile") showProfile();
+      else if (q.get("a")) openAuction(q.get("a")); else showList();
     }
 
     // ============================================================
     // My auctions
     // ============================================================
     async function showList() {
+      if (biddersMount) { biddersMount.stop(); biddersMount = null; }
       code = null; A = null;
       applySportTheme(null);
       history.replaceState(null, "", "host.html");
@@ -147,23 +158,134 @@
           </div>
           <a class="btn btn-sun" href="room.html?a=${c}">${m.status === "ended" ? "Results" : "Room ▶"}</a>
           <button class="btn btn-light" data-edit="${c}">Set up</button>
+          <button class="btn btn-light" data-dup="${c}" title="Make a copy to reuse teams, players and rules">⧉ Duplicate</button>
           <button class="icon-btn" data-del="${c}" title="Delete" aria-label="Delete auction">✕</button>
         </li>`).join("") : `<li class="empty">No auctions yet. Press <b>+ New auction</b> to set one up.</li>`;
     }
 
+    // ============================================================
+    // My profile
+    // ============================================================
+    async function showProfile() {
+      if (biddersMount) { biddersMount.stop(); biddersMount = null; }
+      code = null; A = null;
+      applySportTheme(null);
+      history.replaceState(null, "", "host.html?view=profile");
+      show("profileView");
+      const card = $("profileCard");
+      card.innerHTML = `<p class="muted">Loading…</p>`;
+      const mine = Object.values((await get(ref(db, `auctionsByOwner/${user.uid}`))).val() || {});
+      const count = st => mine.filter(m => (m.status || "setup") === st).length;
+      const since = user.metadata && user.metadata.creationTime ? new Date(user.metadata.creationTime).toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" }) : "";
+      const sports = [...new Set(mine.map(m => m.sport).filter(Boolean))];
+      card.innerHTML = `
+        <div class="profile-head">
+          ${user.photoURL ? `<img class="profile-pic" src="${safe(user.photoURL)}" alt="" referrerpolicy="no-referrer">` : `<span class="profile-pic">${safe(initials(user.displayName || user.email))}</span>`}
+          <div class="grow">
+            <p class="eyebrow" style="margin:0">My profile</p>
+            <h1 class="title" style="margin:2px 0 0">${safe(user.displayName || "Host")}</h1>
+            <p class="lead" style="margin:4px 0 0">${safe(user.email || "")}</p>
+            ${since ? `<p class="muted" style="margin:4px 0 0">Hosting with BidArena since ${safe(since)} · signed in with Google</p>` : ""}
+          </div>
+        </div>
+        <div class="profile-stats">
+          <div><b>${mine.length}</b><span>Auctions</span></div>
+          <div><b>${count("live")}</b><span>Live now</span></div>
+          <div><b>${count("ended")}</b><span>Finished</span></div>
+          <div><b>${count("setup")}</b><span>In setup</span></div>
+        </div>
+        ${sports.length ? `<p class="hint">Sports: ${sports.map(x => `${sportIcon(x)} ${safe(sportName(x))}`).join(" · ")}</p>` : ""}
+        <div class="row" style="margin-top:18px">
+          <button class="btn btn-sun" id="pfList">My auctions ›</button>
+          <button class="btn btn-light" id="pfNew">+ New auction</button>
+          <a class="btn btn-light" href="index.html">Home page</a>
+          <span class="grow"></span>
+          <button class="btn btn-danger" id="pfOut">Sign out</button>
+        </div>`;
+      animate(card);
+      $("pfList").onclick = showList;
+      $("pfNew").onclick = () => { showList(); $("newBtn").click(); };
+      $("pfOut").onclick = async () => { await signOutUser(); location.href = "host.html"; };
+    }
+
     $("auctionList").addEventListener("click", async e => {
-      const ed = e.target.closest("[data-edit]"), del = e.target.closest("[data-del]");
+      const ed = e.target.closest("[data-edit]"), del = e.target.closest("[data-del]"), dup = e.target.closest("[data-dup]");
       if (ed) openAuction(ed.dataset.edit);
+      if (dup) duplicateAuction(dup.dataset.dup);
       if (del) {
         if (!await confirmBox("Delete this auction?", "The auction, its players and all results are removed. This can't be undone.", { ok: "Delete auction", danger: true })) return;
         const c = del.dataset.del;
         await update(ref(db), {
           [`auctions/${c}`]: null, [`auctionSecrets/${c}`]: null,
-          [`auctionPhotos/${c}`]: null, [`auctionMembers/${c}`]: null, [`auctionsByOwner/${user.uid}/${c}`]: null
+          [`auctionPhotos/${c}`]: null, [`auctionMembers/${c}`]: null, [`auctionNames/${c}`]: null, [`auctionOnline/${c}`]: null,
+          [`auctionsByOwner/${user.uid}/${c}`]: null
         });
         showList();
       }
     });
+
+    // ---------- duplicate: a fresh copy in setup, ready to run again ----------
+    async function duplicateAuction(c) {
+      const src = (await get(ref(db, `auctions/${c}`))).val();
+      if (!src) return;
+      const opt = await dialog({
+        title: `Duplicate “${src.title || "auction"}”`, icon: "⧉", dismiss: null,
+        html: `<p>The copy starts in setup with a new code and new team PINs. Sport, money, squad and category rules are always copied.</p>
+          <label class="check"><input type="checkbox" id="dTeams" checked> Teams (names, colours, budgets)</label>
+          <label class="check"><input type="checkbox" id="dPlayers" checked> Players (all back to “waiting”)</label>
+          <label class="check"><input type="checkbox" id="dPhotos" checked> Photos (players, team pictures, landing photos)</label>
+          <label class="label" for="dTitle">Name of the copy</label>
+          <input id="dTitle" class="input" maxlength="60" value="${safe((src.title || "Auction") + " (copy)")}">`,
+        buttons: [{ label: "Cancel", value: null, kind: "light" }, { label: "Duplicate", value: "go", kind: "sun" }],
+        onMount: (box, close) => {
+          box.querySelector(".dlg-actions .btn:last-child").onclick = e => {
+            e.stopPropagation();
+            close({ teams: box.querySelector("#dTeams").checked, players: box.querySelector("#dPlayers").checked,
+                    photos: box.querySelector("#dPhotos").checked, title: box.querySelector("#dTitle").value.trim() });
+          };
+        }
+      });
+      if (!opt || typeof opt !== "object") return;
+      toast("Duplicating…");
+      try {
+        let nc;
+        for (let i = 0; i < 20; i++) { nc = makeCode(6); if (!(await get(ref(db, `auctions/${nc}/owner`))).exists()) break; }
+        const teamsNew = {}, teamPins = {};
+        if (opt.teams && src.teams) Object.entries(src.teams).forEach(([id, t]) => {
+          teamsNew[id] = { name: t.name, color: t.color };
+          if (+t.budget > 0) teamsNew[id].budget = +t.budget;
+          if (opt.photos && t.logoV) teamsNew[id].logoV = t.logoV;
+          teamPins[id] = makePin();
+        });
+        else ["Team A", "Team B"].forEach((name, k) => { const id = newId(); teamsNew[id] = { name, color: TEAM_COLOURS[k] }; teamPins[id] = makePin(); });
+        const playersNew = {};
+        if (opt.players && src.players) Object.entries(src.players).forEach(([id, p]) => {
+          const { status, soldTo, price, rounds, hasPhoto, ...rest } = p;
+          playersNew[id] = { ...rest, status: "pending" };
+          if (opt.photos && hasPhoto) playersNew[id].hasPhoto = true;
+        });
+        const title = opt.title || `${src.title || "Auction"} (copy)`;
+        const copy = { owner: user.uid, title, status: "setup", createdAt: serverTimestamp(), settings: src.settings || {}, teams: teamsNew };
+        if (Object.keys(playersNew).length) copy.players = playersNew;
+        if (opt.photos && src.banners) copy.banners = src.banners;
+        await set(ref(db, `auctions/${nc}`), copy);
+        await set(ref(db, `auctionSecrets/${nc}`), { teamPins });
+        await set(ref(db, `auctionsByOwner/${user.uid}/${nc}`), { title, sport: (src.settings || {}).sport || "", status: "setup", createdAt: serverTimestamp() });
+        if (opt.photos) {
+          const pics = (await get(ref(db, `auctionPhotos/${c}`))).val() || {};
+          const keep = Object.entries(pics).filter(([k]) => k.startsWith("b_") || (k.startsWith("t_") ? !!teamsNew[k.slice(2)] : !!playersNew[k]));
+          for (let i = 0; i < keep.length; i += 15) {
+            const batch = {};
+            keep.slice(i, i + 15).forEach(([k, v]) => { batch[`auctionPhotos/${nc}/${k}`] = v; });
+            await update(ref(db), batch);
+          }
+        }
+        toast("Copy made");
+        openAuction(nc);
+      } catch (e) {
+        alertBox("Couldn't duplicate", e.message || "Something went wrong. Try again.", "⚠️");
+      }
+    }
 
     // ---------- new auction: the sport comes first ----------
     $("newBtn").onclick = () => {
@@ -302,6 +424,7 @@
     // ---------- tabs ----------
     function showTab(name) {
       tab = name;
+      if (name !== "share" && biddersMount) { biddersMount.stop(); biddersMount = null; }
       document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === name));
       document.querySelectorAll(".pane").forEach(p => { p.hidden = p.id !== `pane-${name}`; });
       ({ basics: renderBasics, cats: renderCats, teams: renderTeams, players: renderPlayers, share: renderShare })[name]();
@@ -356,7 +479,9 @@
                    <option value="random" ${s.order === "random" ? "selected" : ""}>Random draw at start</option>
                  </select></div>
              </div>
-             <p class="hint">The timer restarts after every bid. When it runs out, the player is sold.</p>`)}
+             <p class="hint">The timer restarts after every bid. When it runs out, the player is sold.</p>
+             <label class="check switch-row"><input type="checkbox" id="sFair" ${s.fairForced ? "checked" : ""}>
+               <span><b>Fair price for uncontested players</b><br><small>When only one team can still buy a player and it must (e.g. 3 teams each need exactly 1 of 3 players, so the last one has no rival), it gets the player at the lowest price paid in that category, not the base price. You confirm each time.</small></span></label>`)}
         </div>
         <div style="margin-top:14px">${bannerSecHTML()}</div>
         <div style="margin-top:14px">${readinessHTML()}</div>`;
@@ -458,6 +583,7 @@
       }
       else if (t.id === "sTimer") s.timerSec = Number(t.value);
       else if (t.id === "sOrder") s.order = t.value;
+      else if (t.id === "sFair") s.fairForced = t.checked;
       else if (t.id === "sMode") { s.squadMode = t.value; saveSettings(); renderBasics(); return; }
       else return;
       saveSettings();
@@ -559,7 +685,7 @@
               <div class="row"><button class="btn btn-sun btn-sm" data-approve="${id}">Approve</button><button class="btn btn-danger btn-sm" data-reject="${id}">Reject</button></div>
             </div>`).join("")}</div>`) : "") +
         sec("blue", "🛡️", `Teams <span class="muted" style="font-size:18px">${entries.length} of ${MAX_TEAMS}</span>`,
-          `Each team gets a PIN. Only people with the PIN can bid for that team. Budgets start at the default (${money(A.settings.purse, A.settings)}); type a number to give a team its own.`,
+          `Each team gets a PIN and a link. People open it, type their name and ask to bid; you approve them (Share tab or the auction room). Budgets start at the default (${money(A.settings.purse, A.settings)}); type a number to give a team its own.`,
           `<div class="list">
             ${entries.map(([id, t]) => `
               <div class="team-card">
@@ -1044,6 +1170,7 @@
     // 5 · Share: codes, links and QR codes
     // ============================================================
     function renderShare() {
+      if (biddersMount) { biddersMount.stop(); biddersMount = null; }
       const base = new URL("./", location.href).href;
       const watch = `${base}?a=${code}`;
       const teams = Object.entries(A.teams);
@@ -1066,6 +1193,8 @@
                 <p class="share-state ${shared[id] ? "ok" : ""}">${shared[id] ? "✓ Shared" : `Not shared yet · <button class="link-btn" data-mark="${id}">Mark as shared</button>`}</p>
               </div>`;
           }).join("")}</div>`);
+      $("pane-share").insertAdjacentHTML("beforeend", sec("green", "👥", "Who can bid", "Approve each person who asks to bid for a team. Viewers only watch and never need approval.", `<div id="bidderBox"></div>`));
+      biddersMount = mountBidders($("bidderBox"), code, () => A.teams, (id, size) => crestHTML(A.teams[id], logoOf(logos, id), size));
       if (window.QRCode) {
         new QRCode($("qr-watch"), { text: watch, width: 140, height: 140, colorDark: "#13262A", colorLight: "#ffffff" });
         teams.forEach(([id]) => new QRCode($(`qr-${id}`), { text: `${base}?a=${code}&t=${id}&k=${pins[id] || ""}`, width: 140, height: 140, colorDark: "#13262A", colorLight: "#ffffff" }));

@@ -833,3 +833,49 @@ body.has-bidbar .toast { bottom: 190px; }
 .photo-pick-btn { display: block; padding: 11px 12px; border-radius: 12px; border: 1.5px dashed var(--line2); background: #fff; color: var(--ink); font-weight: 700; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .photo-pick-btn:hover { border-color: var(--accent); color: var(--accent); }
 .thumb, .thumb-add { width: 52px; height: 52px; }
+
+/* ---------- connection banner ---------- */
+.conn-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 80; padding: 10px 14px; text-align: center; font-weight: 800; background: var(--hot, #D7263D); color: #fff; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25); }
+
+/* ---------- joining a team ---------- */
+.team-chosen { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 16px; background: color-mix(in srgb, var(--c) 14%, #fff); border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); }
+.team-chosen small { display: block; color: var(--dim); font-weight: 700; }
+.team-chosen b { font-family: var(--display); font-size: 28px; text-transform: uppercase; line-height: 1; }
+.approval-note { margin: 10px 0 0; padding: 12px 14px; border-radius: 14px; background: #FFF6D6; border: 1px solid #F1D27A; color: #5A4300; line-height: 1.4; }
+
+/* ---------- bidders (host approves) ---------- */
+.bidder-teams { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.bidder-team { padding: 12px; border-radius: 16px; background: #fff; border: 1px solid var(--line); border-top: 5px solid var(--c); }
+.bidder-team-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.bidder-team-head b { font-family: var(--display); font-size: 20px; text-transform: uppercase; }
+.bidder-team-head .muted { margin-left: auto; font-size: 13px; }
+.bidder { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+.bidder b { display: block; }
+.bidder small { color: var(--dim); font-size: 12px; }
+.bidder.wait { background: linear-gradient(90deg, #FFF6D6, transparent); margin: 0 -12px; padding: 8px 12px; }
+.bidder .dot { width: 10px; height: 10px; border-radius: 50%; background: #C9CED6; flex: 0 0 auto; }
+.bidder .dot.on { background: #2EBF6B; box-shadow: 0 0 0 3px rgba(46, 191, 107, 0.2); }
+.modal.wide { max-width: 920px; }
+
+/* ---------- account chip and profile ---------- */
+.acct-chip { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px 4px 4px; border-radius: 999px; border: 1px solid var(--line2); background: #fff; color: var(--ink); text-decoration: none; font: inherit; font-weight: 700; cursor: pointer; }
+.acct-chip img, .acct-chip span { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; display: grid; place-items: center; background: var(--accent); color: #fff; font-size: 13px; }
+.acct-chip:hover { border-color: var(--accent); }
+.who { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.profile-card { max-width: 820px; margin: 0 auto; padding: clamp(20px, 4vw, 36px); }
+.profile-head { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.profile-pic { width: 96px; height: 96px; border-radius: 50%; object-fit: cover; display: grid; place-items: center; background: var(--accent); color: #fff; font-family: var(--display); font-size: 40px; font-weight: 800; box-shadow: var(--shadow); }
+.profile-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 22px; }
+.profile-stats div { padding: 14px; border-radius: 16px; background: #fff; border: 1px solid var(--line); text-align: center; }
+.profile-stats b { display: block; font-family: var(--display); font-size: 40px; line-height: 1; }
+.profile-stats span { color: var(--dim); font-weight: 700; font-size: 14px; }
+@media (max-width: 560px) { .profile-stats { grid-template-columns: 1fr 1fr; } }
+
+/* ---------- checkboxes in dialogs and settings ---------- */
+.check { display: flex; gap: 10px; align-items: flex-start; margin: 10px 0; font-weight: 600; cursor: pointer; }
+.check input { width: 20px; height: 20px; margin-top: 2px; accent-color: var(--accent); flex: 0 0 auto; }
+.switch-row { margin-top: 14px; padding: 12px; border-radius: 14px; background: #fff; border: 1px solid var(--line); }
+.switch-row small { color: var(--dim); font-weight: 500; line-height: 1.4; }
+.bidder { flex-wrap: wrap; }
+.bidder .grow { flex: 1 1 150px; min-width: 130px; }
+.bidder .btn { flex: 0 0 auto; }

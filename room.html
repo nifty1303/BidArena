@@ -16,6 +16,7 @@
       <h1 id="roomTitle" class="room-title"></h1>
       <span id="livePill" class="pill live" hidden>● Live</span>
       <span id="joinChip" class="join-chip" hidden></span>
+      <button id="biddersBtn" class="btn btn-dark req-btn" title="Approve who can bid">👥 Bidders<span class="badge" id="bidderCount" hidden></span></button>
       <button id="reqBtn" class="btn btn-dark req-btn" hidden>Team requests<span class="badge" id="reqCount"></span></button>
       <a id="setupLink" class="btn btn-dark" href="host.html">⚙ Setup</a>
       <button id="fullBtn" class="btn btn-dark" title="Full screen (F)">⛶</button>
@@ -62,6 +63,7 @@
 
     <section id="results" hidden></section>
   </main>
+  <div id="connBar" class="conn-bar" hidden>⚠️ Connection lost. Reconnecting… The timer won't close a player until you're back.</div>
 
   <script type="module">
     import {
@@ -70,7 +72,8 @@
       catList, catMax, squadLimits, squadText, setupProblems, UNSOLD_RULES,
       catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine,
       dialog, alertBox, confirmBox, copyText, teamBudget, purseLeftOf,
-      playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground
+      playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
+      mountBidders, watchConnection
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction room");
@@ -105,6 +108,7 @@
         return;
       }
       $("setupLink").href = `host.html?a=${code}`;
+      watchBidderRequests();
       onValue(aRef(), async snap => {
         A = snap.val();
         if (!A) { message(`<h2 class="title">Auction not found</h2><p class="lead">It may have been deleted.</p>`); return; }
@@ -129,6 +133,42 @@
       $("stage").dataset.idle = "";
       if (A.status === "live") renderStage();
     }
+
+    // ---------- bidders (team phones ask, the host approves) ----------
+    let bidderInfo = { pending: 0, approved: 0 }, seenPending = null;
+    function watchBidderRequests() {
+      onValue(ref(db, `auctionMembers/${code}`), snap => {
+        const all = Object.values(snap.val() || {});
+        const pending = all.filter(m => !m.approved).length;
+        bidderInfo = { pending, approved: all.length - pending };
+        $("bidderCount").hidden = !pending;
+        $("bidderCount").textContent = pending;
+        if (seenPending !== null && pending > seenPending) { sounds.going(); toast(`👥 ${pending} bidder${pending === 1 ? "" : "s"} waiting for approval`); }
+        seenPending = pending;
+        if ($("bidderSummary")) $("bidderSummary").innerHTML = bidderSummaryHTML();
+      }, () => {});
+    }
+    const bidderSummaryHTML = () => `${bidderInfo.approved} approved · <b>${bidderInfo.pending} waiting</b>`;
+    function openBidders() {
+      const back = document.createElement("div");
+      back.className = "modal-back";
+      back.innerHTML = `<section class="card modal wide"><button class="icon-btn modal-x" aria-label="Close">✕</button>
+        <h2 class="title" style="font-size:36px">Who can <span>bid</span></h2>
+        <p class="hint">Approve each person before they can bid. Remove anyone who shouldn't be bidding: their phone stops at once.</p>
+        <div id="bidderBox" style="margin-top:12px"></div></section>`;
+      document.body.appendChild(back);
+      const m = mountBidders(back.querySelector("#bidderBox"), code, () => (A && A.teams) || {}, (id, size) => crest(id, size));
+      back.addEventListener("click", e => { if (e.target === back || e.target.closest(".modal-x")) { m.stop(); back.remove(); } });
+    }
+    $("biddersBtn").onclick = openBidders;
+
+    // Connection banner for the host's screen
+    let hostOnline = true, offTimer = null;
+    watchConnection(on => {
+      hostOnline = on; clearTimeout(offTimer);
+      if (on) $("connBar").hidden = true;
+      else offTimer = setTimeout(() => { if (!hostOnline) $("connBar").hidden = false; }, 2000);
+    });
 
     const S = () => A.settings || {};
     const teams = () => Object.entries(A.teams || {});
@@ -211,7 +251,13 @@
         ${issues.length ? `<ul class="err" style="padding-left:18px">${issues.map(x => `<li>${safe(x)}</li>`).join("")}</ul>
           <a class="btn btn-light btn-block" href="host.html?a=${code}" style="margin-top:12px">Fix in setup</a>`
           : `<p class="hint">Players are auctioned category by category. Starting gives every team its budget (${money(s.purse, s)} unless you set a different one in Teams). Teams can join now with their links.</p>
-             <button id="goLive" class="btn btn-sun btn-block btn-lg" style="margin-top:16px">Start the auction ▶</button>`}`);
+             <button id="goLive" class="btn btn-sun btn-block btn-lg" style="margin-top:16px">Start the auction ▶</button>`}
+        <div class="row" style="margin-top:14px;justify-content:space-between;align-items:center">
+          <span>👥 Bidders: <span id="bidderSummary">${bidderSummaryHTML()}</span></span>
+          <button class="btn btn-light btn-sm" id="startBidders">Approve bidders</button>
+        </div>
+        ${s.fairForced ? `<p class="hint">⚖️ Fair price is on: a player only one team can still buy goes to that team at the lowest price paid in that category.</p>` : ""}`);
+      $("startBidders").onclick = openBidders;
       const go = $("goLive");
       if (go) go.onclick = goLive;
     }
@@ -412,7 +458,7 @@
       const bids = allBids.sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 6);
       $("history").innerHTML = bids.map(b => {
         const t = A.teams[b.team] || { name: "?", color: "#999" };
-        return `<li>${crest(b.team, "sm")}${safe(t.name)} <span class="amt">${money(b.amount, s)}</span></li>`;
+        return `<li>${crest(b.team, "sm")}${safe(t.name)}${b.by && b.by !== "host" ? ` <small class="muted">${safe(b.by)}</small>` : ""} <span class="amt">${money(b.amount, s)}</span></li>`;
       }).join("");
       $("heatFill").style.width = `${Math.min(100, allBids.length * 9)}%`;
       $("heatNum").textContent = `${allBids.length} bid${allBids.length === 1 ? "" : "s"}${allBids.length >= 8 ? " 🔥" : ""}`;
@@ -423,7 +469,7 @@
         const wrap = document.createElement("div");
         wrap.className = "stamp-wrap";
         if (live.state === "sold" && leader) {
-          wrap.innerHTML = `<div class="stamp" style="--c:${safe(leader.color)}">${crest(live.team, "xl")}<div class="stamp-word">SOLD!</div><div class="stamp-sub">${safe(p.name)} → ${safe(leader.name)} · ${money(live.amount, s)}</div></div>`;
+          wrap.innerHTML = `<div class="stamp" style="--c:${safe(leader.color)}">${crest(live.team, "xl")}<div class="stamp-word">SOLD!</div><div class="stamp-sub">${safe(p.name)} → ${safe(leader.name)} · ${money(live.amount, s)}</div>${live.forced ? `<div class="stamp-sub" style="font-size:18px;opacity:.85">Auto-assigned: the only team left that needed a ${safe(cat.name)} player · lowest ${safe(cat.name)} price</div>` : ""}</div>`;
           stage.appendChild(wrap);
           const fl = document.createElement("div"); fl.className = "flash-bg"; stage.appendChild(fl); setTimeout(() => fl.remove(), 600);
           confetti(stage, leader.color);
@@ -456,7 +502,7 @@
       if (live.state === "bidding" && secs <= 5 && secs > 0 && secs !== lastTick) { lastTick = secs; sounds.tick(); }
       showGoing(live.state === "paused" ? "paused" : live.state === "bidding" && live.team ? (secs <= 2 && secs > 0 ? "twice" : secs <= 4 && secs > 2 ? "once" : "") : "");
       // Time's up: the host's screen closes the sale
-      if (live.state === "bidding" && left <= 0 && !closing) finalize(false);
+      if (live.state === "bidding" && left <= 0 && !closing && hostOnline) finalize(false);
     }
     setInterval(() => { if (A && A.status === "live") tick(); }, 200);
 
@@ -543,11 +589,39 @@
     // ============================================================
     // Actions
     // ============================================================
-    async function startLot(pid) {
+    // Who could buy this player right now? If only one team can, and it still needs this category,
+    // there's no contest: with "fair price" on, that team gets the player at the lowest price paid in the category.
+    function soleBuyer(p) {
+      const cat = catOf(p);
+      const able = teams().filter(([, t]) => ((t.maxBid || {})[p.cat] || 0) >= cat.base);
+      if (able.length !== 1) return null;
+      const [id, t] = able[0];
+      if (((t.cat || {})[p.cat] || 0) >= cat.min) return null;           // it doesn't have to buy: auction normally
+      const paid = sales().filter(x => x.cat === p.cat && !x.forced).map(x => x.price);
+      const lowest = paid.length ? Math.min(...paid) : cat.base;
+      const price = Math.max(cat.base, Math.min(lowest, (t.maxBid || {})[p.cat] || cat.base));
+      return { team: id, price, lowest, paid: paid.length };
+    }
+
+    async function startLot(pid, opts = {}) {
       unlockAudio();
       const p = A.players[pid], s = S();
       if (!p) return;
       const cat = catOf(p);
+      if (s.fairForced && !opts.skipFair) {
+        const f = soleBuyer(p);
+        if (f) {
+          const t = A.teams[f.team];
+          const pick = await dialog({
+            title: `Only ${t.name} can buy ${p.name}`, icon: "⚖️", dismiss: null,
+            html: `<p>Every other team is full in <b>${safe(cat.name)}</b>, and ${safe(t.name)} still needs one. Without bidding they'd get ${safe(p.name)} at the base price.</p>
+                   <p>Fair price: assign at <b>${money(f.price, s)}</b>, ${f.paid ? `the lowest price paid for ${safe(cat.name)} so far` : `the base price (no ${safe(cat.name)} sold yet)`}${f.price < f.lowest ? ` (capped at what ${safe(t.name)} can afford)` : ""}.</p>`,
+            buttons: [{ label: "Cancel", value: null, kind: "light" }, { label: "Auction normally", value: "auction", kind: "light" }, { label: `Assign for ${money(f.price, s)}`, value: "assign", kind: "sun" }]
+          });
+          if (!pick) return;
+          if (pick === "assign") return assignForced(pid, f);
+        }
+      }
       closing = false;
       const timerMs = (s.timerSec || 20) * 1000;
       await update(ref(db), {
@@ -579,6 +653,43 @@
       });
     }
 
+    // A player only one team could buy goes straight to it at the fair price
+    async function assignForced(pid, f) {
+      if (closing) return;
+      closing = true;
+      try {
+        const p = A.players[pid], cat = catOf(p), rounds = (p.rounds || 0) + 1;
+        const live = { pid, cat: p.cat, round: rounds, state: "closing", base: cat.base, amount: f.price, team: f.team, seq: 0,
+                       timerMs: (S().timerSec || 20) * 1000, clockFrom: serverNow(), forced: true };
+        await update(ref(db), { [`auctions/${code}/bids/${pid}`]: null, [`auctions/${code}/live`]: live });
+        await applySale(live, rounds);
+      } finally { closing = false; }
+    }
+
+    // Records a sale: the team's money and squad, the player's status, the sales list
+    async function applySale(live, rounds) {
+      const s = S();
+      const t = (await get(aRef(`teams/${live.team}`))).val();
+      const cat = { ...(t.cat || {}) };
+      cat[live.cat] = (cat[live.cat] || 0) + 1;
+      const nt = { purseLeft: (t.purseLeft || 0) - live.amount, spent: (t.spent || 0) + live.amount, count: (t.count || 0) + 1, cat };
+      nt.maxBid = allMaxBids(nt, s);
+      const key = push(aRef("sales")).key;
+      const sale = { pid: live.pid, team: live.team, cat: live.cat, price: live.amount, at: serverTimestamp() };
+      if (live.forced) sale.forced = true;
+      const changes = {
+        [`auctions/${code}/players/${live.pid}/rounds`]: rounds,
+        [`auctions/${code}/wishCount/${live.pid}`]: null,
+        [`auctions/${code}/players/${live.pid}/status`]: "sold",
+        [`auctions/${code}/players/${live.pid}/soldTo`]: live.team,
+        [`auctions/${code}/players/${live.pid}/price`]: live.amount,
+        [`auctions/${code}/sales/${key}`]: sale,
+        [`auctions/${code}/live/state`]: "sold"
+      };
+      Object.entries(nt).forEach(([k, v]) => { changes[`auctions/${code}/teams/${live.team}/${k}`] = v; });
+      await update(ref(db), changes);
+    }
+
     // Close the current player: sold to the highest bidder, or unsold
     async function finalize(forceUnsold) {
       if (closing) return;
@@ -586,33 +697,13 @@
       try {
         await update(aRef("live"), { state: "closing" });            // phones can't bid any more
         const live = (await get(aRef("live"))).val();
-        const s = S();
         const rounds = ((A.players[live.pid] || {}).rounds || 0) + 1;
-        if (live.team && !forceUnsold) {
-          const t = (await get(aRef(`teams/${live.team}`))).val();
-          const cat = { ...(t.cat || {}) };
-          cat[live.cat] = (cat[live.cat] || 0) + 1;
-          const nt = { purseLeft: (t.purseLeft || 0) - live.amount, spent: (t.spent || 0) + live.amount, count: (t.count || 0) + 1, cat };
-          nt.maxBid = allMaxBids(nt, s);
-          const key = push(aRef("sales")).key;
-          const changes = {
-            [`auctions/${code}/players/${live.pid}/rounds`]: rounds,
-            [`auctions/${code}/wishCount/${live.pid}`]: null,
-            [`auctions/${code}/players/${live.pid}/status`]: "sold",
-            [`auctions/${code}/players/${live.pid}/soldTo`]: live.team,
-            [`auctions/${code}/players/${live.pid}/price`]: live.amount,
-            [`auctions/${code}/sales/${key}`]: { pid: live.pid, team: live.team, cat: live.cat, price: live.amount, at: serverTimestamp() },
-            [`auctions/${code}/live/state`]: "sold"
-          };
-          Object.entries(nt).forEach(([k, v]) => { changes[`auctions/${code}/teams/${live.team}/${k}`] = v; });
-          await update(ref(db), changes);
-        } else {
-          await update(ref(db), {
-            [`auctions/${code}/players/${live.pid}/status`]: "unsold",
-            [`auctions/${code}/players/${live.pid}/rounds`]: rounds,
-            [`auctions/${code}/live/state`]: "unsold"
-          });
-        }
+        if (live.team && !forceUnsold) await applySale(live, rounds);
+        else await update(ref(db), {
+          [`auctions/${code}/players/${live.pid}/status`]: "unsold",
+          [`auctions/${code}/players/${live.pid}/rounds`]: rounds,
+          [`auctions/${code}/live/state`]: "unsold"
+        });
       } finally {
         closing = false;
       }
@@ -703,7 +794,7 @@
     $("addTimeBtn").onclick = addTime;
     $("soldBtn").onclick = () => finalize(false);
     $("unsoldBtn").onclick = async () => { if (!L().team || await confirmBox("Mark unsold?", "There are bids on this player. They'll be cleared and the player goes to the unsold pool.", { ok: "Mark unsold", danger: true })) finalize(true); };
-    $("restartBtn").onclick = async () => { if (await confirmBox("Restart bidding?", "Bidding on this player starts again from the base price.", { ok: "Restart", icon: "↺" })) startLot(L().pid); };
+    $("restartBtn").onclick = async () => { if (await confirmBox("Restart bidding?", "Bidding on this player starts again from the base price.", { ok: "Restart", icon: "↺" })) startLot(L().pid, { skipFair: true }); };
     $("undoBtn").onclick = undoLastSale;
     $("pool").addEventListener("click", e => { const b = e.target.closest("[data-call]"); if (b) startLot(b.dataset.call); });
     $("endBtn").onclick = endAuction;

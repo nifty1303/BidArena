@@ -107,6 +107,7 @@
         A = snap.val();
         if (!A) { message(`<h2 class="title">Auction not found</h2><p class="lead">It may have been deleted.</p>`); return; }
         if (A.owner !== user.uid) { message(`<h2 class="title">Not your auction</h2><p class="lead">Only its host can run this room. To watch, open the viewer page with the code <b>${code}</b>.</p>`); return; }
+        if (A.members) set(aRef("members"), null);     // old public member list held team PINs; members now live in auctionMembers
         render();
         if (await loadTeamLogos(code, A.teams, logos)) { lastKey = ""; render(); }   // a team picture changed
       });
@@ -201,9 +202,9 @@
 
     // Before starting: make sure every team has been sent its link
     async function shareCheck() {
-      const sec = (await get(ref(db, `auctionSecrets/${code}`))).val() || {};
+      const [sec, members] = (await Promise.all([get(ref(db, `auctionSecrets/${code}`)), get(ref(db, `auctionMembers/${code}`))])).map(x => x.val() || {});
       const pins = sec.teamPins || {}, shared = { ...(sec.shared || {}) };
-      const joined = new Set(Object.values(A.members || {}).map(m => m.team));
+      const joined = new Set(Object.values(members).map(m => m.team));
       const waiting = teams().filter(([id]) => !shared[id] && !joined.has(id));
       if (!waiting.length) return true;
       const base = new URL("./", location.href).href;

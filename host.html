@@ -159,7 +159,7 @@
         const c = del.dataset.del;
         await update(ref(db), {
           [`auctions/${c}`]: null, [`auctionSecrets/${c}`]: null,
-          [`auctionPhotos/${c}`]: null, [`auctionsByOwner/${user.uid}/${c}`]: null
+          [`auctionPhotos/${c}`]: null, [`auctionMembers/${c}`]: null, [`auctionsByOwner/${user.uid}/${c}`]: null
         });
         showList();
       }

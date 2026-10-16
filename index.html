@@ -149,7 +149,7 @@
       // A team link opens straight into that team
       const t = params.get("t"), k = params.get("k");
       if (t && k && A.teams && A.teams[t]) { await joinTeam(t, k); return; }
-      const mine = (await get(ref(db, `auctions/${c}/members/${me.uid}`))).val();
+      const mine = (await get(ref(db, `auctionMembers/${c}/${me.uid}`))).val();
       if (mine && A.teams && A.teams[mine.team]) { myTeam = mine.team; saveSeat(); listen(); return; }
       showSeatForm();
     }
@@ -201,7 +201,7 @@
       unlockAudio();
       try {
         // The database checks the PIN; a wrong one is refused
-        await set(ref(db, `auctions/${code}/members/${me.uid}`), { team, pin: String(pin), name: "Team device" });
+        await set(ref(db, `auctionMembers/${code}/${me.uid}`), { team, pin: String(pin), name: "Team device" });
         myTeam = team;
         saveSeat();
         listen();
@@ -314,7 +314,7 @@
       const live = L(), s = S(), plot = $("plot");
       const key = `${live.pid || ""}:${live.state}`;
       const changed = key !== lastKey;
-      if (live.state === "idle" || !live.pid || !A.players[live.pid]) {
+      if (live.state === "idle" || !live.pid || !(A.players || {})[live.pid]) {
         if (changed) { plot.innerHTML = `<div class="idle" style="padding:40px 10px"><h2 class="title" style="font-size:26px">Waiting for the next player…</h2></div>`; animate(plot); }
         lastKey = key; lastSeq = -1;
         return;

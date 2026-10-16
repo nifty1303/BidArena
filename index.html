@@ -21,7 +21,7 @@
       db, ref, get, set, update, push, onValue, serverTimestamp, serverNow, ensureGuest,
       safe, animate, initials, money, nextBid, stepFor, sounds, unlockAudio, confetti, brandHTML, endsAt,
       catList, catMax, squadLimits, squadText, catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine, purseLeftOf,
-      playerDetailsHTML, loadBanners, bannerHTML, startBannerShow, setPageBackground,
+      playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
       onDisconnect, watchConnection, cleanName, nameKeyOf, currentUser, isHostAccount, confirmBox
     } from "./app.js";
 
@@ -833,13 +833,38 @@
           || `<li><span class="muted">No unsold players right now</span><span></span></li>`;
       }
       const live = L();
-      $("allTeams").innerHTML = Object.entries(A.teams || {}).map(([id, t]) => `
-        <div class="trow ${live.team === id && live.state === "bidding" ? "leading" : ""}" style="--c:${safe(t.color)}">
-          ${crest(id)}
-          <div><div class="tname">${safe(t.name)}${id === myTeam ? " (you)" : ""}</div><div class="tmeta">${t.count || 0} player${t.count === 1 ? "" : "s"}</div></div>
-          <div class="tpurse">${money(purseLeftOf(t, s), s)}<small>left</small></div>
-        </div>`).join("");
+      const cats = catList(s);
+      const catName = id => (cats.find(c => c.id === id) || { name: "" }).name;
+      $("allTeams").innerHTML = Object.entries(A.teams || {}).map(([id, t]) => {
+        const open = openTeams.has(id);
+        const squad = players.filter(([, p]) => p.status === "sold" && p.soldTo === id)
+          .sort((a, b) => cats.findIndex(c => c.id === a[1].cat) - cats.findIndex(c => c.id === b[1].cat) || (b[1].price || 0) - (a[1].price || 0));
+        return `
+        <div class="team-block ${open ? "open" : ""}" style="--c:${safe(t.color)}">
+          <button type="button" class="trow trow-btn ${live.team === id && live.state === "bidding" ? "leading" : ""}" data-tview="${id}" aria-expanded="${open}">
+            ${crest(id)}
+            <div><div class="tname">${safe(t.name)}${id === myTeam ? " (you)" : ""}</div><div class="tmeta">${t.count || 0} player${t.count === 1 ? "" : "s"} · ${open ? "tap to close" : "tap to see squad"}</div></div>
+            <div class="tpurse">${money(purseLeftOf(t, s), s)}<small>left</small></div>
+            <span class="tchev" aria-hidden="true">▾</span>
+          </button>
+          ${open ? `<div class="team-squad">
+              ${squad.length ? `<ul>${squad.map(([, p]) => `<li><span><b>${safe(p.name)}</b><small>${safe([positionOf(p, s), catName(p.cat)].filter(Boolean).join(" · "))}</small></span><b class="tsq-price">${money(p.price, s)}</b></li>`).join("")}</ul>`
+                : `<p class="muted" style="margin:4px 0">No players bought yet.</p>`}
+              <div class="tsq-foot"><span>Spent <b>${money(t.spent || 0, s)}</b></span><span>Left <b>${money(purseLeftOf(t, s), s)}</b></span></div>
+              <div class="tsq-cats">${cats.map(c => { const n = (t.cat && t.cat[c.id]) || 0; return `<span class="tc ${n >= catMax(c) ? "done" : n < c.min ? "short" : "ok"}" style="--cc:${catColour(s, c.id)}">${safe(c.name)} ${n}/${c.min}${c.max ? "–" + c.max : "+"}</span>`; }).join("")}</div>
+            </div>` : ""}
+        </div>`;
+      }).join("");
     }
+    // Tap a team to see its squad so far (stays open while new sales come in)
+    const openTeams = new Set();
+    document.addEventListener("click", e => {
+      const b = e.target.closest("[data-tview]");
+      if (!b) return;
+      const id = b.dataset.tview;
+      openTeams.has(id) ? openTeams.delete(id) : openTeams.add(id);
+      renderSquads();
+    });
 
     function openEditTeam() {
       const t = team();

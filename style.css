@@ -25,7 +25,7 @@
   --violet: #6B4FD8;
   --cyan: #0F9BB0;
 
-  --bg-img: url("Images/Home_Background.jpg");
+  --bg-img: url("Images/KAFCO_2.jpeg");     /* home page and host pages: the KAFCO grounds */
   --r: 18px;
   --shadow: 0 1px 2px rgba(19, 38, 42, 0.06), 0 12px 32px rgba(19, 38, 42, 0.10);
   --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
@@ -916,3 +916,15 @@ body.has-bidbar .toast { bottom: 190px; }
 .next-up b { font-family: var(--display); font-size: clamp(26px, 2.6vw, 38px); font-weight: 800; text-transform: uppercase; line-height: 1; color: #fff; }
 .next-up .nu-cat { font-weight: 700; opacity: 0.85; }
 .audience { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+/* ---------- home page: back to an auction in progress ---------- */
+.resume-slot { display: grid; gap: 10px; margin-bottom: 14px; }
+.resume-slot:empty { display: none; }
+.resume-card { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 18px; border-radius: 20px; background: rgba(255, 255, 255, 0.95); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.resume-card small { display: block; font-size: 12px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
+.resume-card b { display: block; font-family: var(--display); font-size: 26px; font-weight: 800; text-transform: uppercase; line-height: 1.05; }
+.resume-card span { color: var(--ink); }
+.resume-card .grow { min-width: 200px; }
+.resume-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--gold, #E0A100); flex: 0 0 auto; }
+.resume-dot.live { background: var(--hot, #D7263D); animation: livePulse 1.6s infinite; }
+.loading-card { text-align: center; padding: 30px; font-weight: 700; color: var(--dim); }

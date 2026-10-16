@@ -192,6 +192,7 @@
       setWide(true);
       $("hostPill").hidden = false;
       view.innerHTML = `
+        <div id="resumeSlot" class="resume-slot"></div>
         <section class="hero">
           <div class="hero-copy">
             <p class="eyebrow">Live team auctions for any sport</p>
@@ -271,6 +272,7 @@
         </footer>`;
       animate(view);
       startVenueShow();
+      showResumeCards();
       const go = async () => {
         unlockAudio();
         const c = $("codeIn").value.trim().toUpperCase();
@@ -282,6 +284,44 @@
       $("codeGo").onclick = go;
       $("codeIn").addEventListener("keydown", e => { if (e.key === "Enter") go(); });
       if (message) $("join").scrollIntoView({ block: "center" });
+    }
+
+    // ---------- home page: a way back into auctions in progress (nothing about them changes) ----------
+    async function showResumeCards() {
+      let saved = null;
+      try { saved = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
+      const u = await currentUser();               // never signs anyone in just for visiting the home page
+      if (!u) return;
+      const cards = [];
+      if (saved && saved.code) {
+        try {
+          const [t, st, m] = await Promise.all([
+            get(ref(db, `auctions/${saved.code}/title`)), get(ref(db, `auctions/${saved.code}/status`)),
+            get(ref(db, `auctionMembers/${saved.code}/${u.uid}`)).catch(() => null)]);
+          if (t.exists() && st.val() !== "ended") {
+            const mem = m && m.val();
+            const teamName = mem ? (await get(ref(db, `auctions/${saved.code}/teams/${mem.team}/name`))).val() : "";
+            const who = mem ? `${mem.approved ? "Bidding" : "Asked to bid"} for <b>${safe(teamName || "your team")}</b> as ${safe(mem.name)}` : `Watching${myName() ? ` as ${safe(myName())}` : ""}`;
+            cards.push(`<div class="resume-card"><span class="resume-dot ${st.val() === "live" ? "live" : ""}"></span>
+              <div class="grow"><small>${st.val() === "live" ? "Live now" : "Starting soon"} · code ${safe(saved.code)}</small><b>${safe(t.val())}</b><span>${who}</span></div>
+              <a class="btn btn-sun" href="index.html?a=${safe(saved.code)}">Back to the auction ▶</a></div>`);
+          }
+        } catch (e) {}
+      }
+      if (isHostAccount(u)) {
+        try {
+          const mine = Object.entries((await get(ref(db, `auctionsByOwner/${u.uid}`))).val() || {});
+          const live = (await Promise.all(mine.map(async ([c, m]) => {
+            const st = (await get(ref(db, `auctions/${c}/status`))).val();
+            return st === "live" ? [c, m] : null;
+          }))).filter(Boolean);
+          live.forEach(([c, m]) => cards.push(`<div class="resume-card host"><span class="resume-dot live"></span>
+            <div class="grow"><small>Your live auction${m.role === "editor" ? " (shared with you)" : ""} · code ${safe(c)}</small><b>${safe(m.title || "Auction")}</b><span>It keeps running while you're here.</span></div>
+            <a class="btn btn-sun" href="room.html?a=${safe(c)}">Open auction room ▶</a></div>`));
+        } catch (e) {}
+      }
+      const slot = $("resumeSlot");
+      if (slot && cards.length) { slot.innerHTML = cards.join(""); animate(slot); }
     }
 
     // KAFCO photos take turns on the landing page
@@ -310,6 +350,10 @@
       const t = params.get("t"), k = params.get("k");
       const mine = (await get(ref(db, `auctionMembers/${c}/${me.uid}`))).val();
       if (mine && A.teams && A.teams[mine.team] && (!t || t === mine.team)) { myTeam = mine.team; myMember = mine; saveSeat(); listen(); return; }
+      // Was watching this auction on this phone before: carry on watching
+      let saved = null;
+      try { saved = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
+      if (!t && !mine && saved && saved.code === c && !saved.team && myName()) { myTeam = null; listen(); return; }
       // A team link opens that team's join form: just type your name
       if (t && k && A.teams && A.teams[t]) { showSeatForm("", { team: t, pin: k }); return; }
       showSeatForm();
@@ -799,30 +843,15 @@
     }
 
     // ============================================================
-    // Start: resume a saved seat, or ask for the code
+    // Start: an auction link (?a=CODE) opens that auction and carries on where this phone was.
+    // The plain home page always shows the home page, with "Back to the auction" cards.
     // ============================================================
     (async () => {
       const a = (params.get("a") || "").toUpperCase();
-      let saved = null;
-      try { saved = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
       if (a) {
+        view.innerHTML = `<div class="loading-card card">Opening the auction…</div>`;
         try { await openAuction(a); } catch (e) { showCodeForm("Couldn't connect. Check your internet and try again."); }
         return;
-      }
-      if (saved && saved.code) {
-        try {
-          me = await ensureGuest();
-          const snap = await get(ref(db, `auctions/${saved.code}`));
-          if (snap.exists()) {
-            code = saved.code; A = snap.val();
-            myMember = (await get(memberRef())).val();
-            myTeam = myMember && A.teams && A.teams[myMember.team] ? myMember.team : null;
-            applySportTheme(A.settings && A.settings.sport);
-            if (!myTeam && !myName()) { await refreshBanners(); showSeatForm("Type your name to watch, or ask to bid for your team."); return; }
-            listen(); return;
-          }
-        } catch (e) {}
-        clearSeat();
       }
       showCodeForm();
     })();

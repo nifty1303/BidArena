@@ -581,13 +581,37 @@
       return photos[pid];
     }
 
+    // Before the first player: a welcome. Afterwards: waiting, with how far the auction has got.
+    function idleHTML() {
+      const s = S(), t = team();
+      const players = Object.values(A.players || {});
+      const sold = players.filter(p => p.status === "sold").length, waiting = players.filter(p => (p.status || "pending") === "pending").length;
+      const first = !sold && !players.some(p => p.status === "unsold");
+      const name = (myMember && myMember.name) || myName();
+      if (!first) return `<div class="idle" style="padding:34px 10px"><h2 class="title" style="font-size:26px">Waiting for the next player…</h2>
+        <p class="lead" style="margin-top:8px">${sold} sold · ${waiting} still to come</p></div>`;
+      return `<div class="welcome">
+          <p class="eyebrow" style="margin:0">${t ? "You're in" : "Watching live"}</p>
+          <h2 class="title">Welcome${name ? `, ${safe(name)}` : ""}!</h2>
+          <p class="lead">${t ? `You're bidding for <b>${safe(t.name)}</b> in <b>${safe(A.title || "the auction")}</b>.` : `You're watching <b>${safe(A.title || "the auction")}</b> live.`}</p>
+          ${t ? `<ul class="welcome-list">
+              <li><span>💰</span>Budget <b>${money(purseLeftOf(t, s), s)}</b></li>
+              <li><span>👥</span>Buy <b>${safe(squadText(s))}</b> players</li>
+              <li><span>⏱️</span><b>${s.timerSec || 20} seconds</b> per player; every bid restarts the clock</li>
+            </ul>
+            <p class="hint" style="margin:10px 0 0">${approved() ? "When a player comes up, a big <b>BID</b> button appears at the bottom of your screen. One tap places your bid." : "The host still needs to approve you. Your bid button unlocks by itself."}</p>`
+          : `<p class="hint" style="margin:10px 0 0">${players.length} players are up for auction. The first one comes up soon.</p>`}
+          <p class="welcome-wait">⏳ Waiting for the first player…</p>
+        </div>`;
+    }
+
     function renderPlot() {
       const live = L(), s = S(), plot = $("plot");
       const key = `${live.pid || ""}:${live.state}`;
       const changed = key !== lastKey;
       bidBarShow(!!team() && ["bidding", "paused"].includes(live.state) && !!(A.players || {})[live.pid]);
       if (live.state === "idle" || !live.pid || !(A.players || {})[live.pid]) {
-        if (changed) { plot.innerHTML = `<div class="idle" style="padding:40px 10px"><h2 class="title" style="font-size:26px">Waiting for the next player…</h2></div>`; animate(plot); }
+        if (changed) { plot.innerHTML = idleHTML(); animate(plot); }
         lastKey = key; lastSeq = -1;
         return;
       }
@@ -626,7 +650,7 @@
         lastSeq = live.seq;
       }
       $("pLeader").innerHTML = leader
-        ? `<span class="leader" style="border-color:${safe(leader.color)}">${crest(live.team, "sm")}${safe(leader.name)}${live.team === myTeam ? " (you)" : ""}</span>`
+        ? `<span class="leader" style="border-color:${safe(leader.color)}">${crest(live.team, "sm")}<span class="ld-txt"><small>${live.state === "sold" ? "Bought by" : "Leading bid"}</small>${safe(leader.name)}${live.team === myTeam ? " (you)" : ""}</span></span>`
         : `<span class="leader none">No bids yet</span>`;
 
       // Outbid: buzz so they notice

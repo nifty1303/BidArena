@@ -581,6 +581,23 @@
       return photos[pid];
     }
 
+    // Full-screen green and gold confetti, in three bursts, with a quick green flash
+    function celebrate() {
+      const colours = ["#22C55E", "#0E8A43", "#FFD23F", "#FFFFFF", "#7CF29A", "#16A34A"];
+      const flash = document.createElement("div");
+      flash.className = "win-flash";
+      const box = document.createElement("div");
+      box.className = "win-confetti";
+      box.innerHTML = [[50, 40, 0], [22, 55, 0.25], [78, 55, 0.45]].map(([x, y, delay]) => `<div class="confetti" style="left:${x}%;top:${y}%">${
+        Array.from({ length: 46 }, (_, i) => {
+          const a = Math.random() * Math.PI * 2, d = 140 + Math.random() * 300;
+          const w = 7 + Math.round(Math.random() * 7);
+          return `<i style="--x:${Math.round(Math.cos(a) * d)}px;--y:${Math.round(Math.sin(a) * d - 160)}px;--r:${Math.round(Math.random() * 900)}deg;background:${colours[i % colours.length]};width:${w}px;height:${w + 6}px;animation-delay:${delay}s;${i % 4 === 0 ? "border-radius:50%;" : ""}"></i>`;
+        }).join("")}</div>`).join("");
+      document.body.append(flash, box);
+      setTimeout(() => { flash.remove(); box.remove(); }, 3200);
+    }
+
     // Before the first player: a welcome. Afterwards: waiting, with how far the auction has got.
     function idleHTML() {
       const s = S(), t = team();
@@ -667,11 +684,24 @@
         plot.querySelector(".stamp-wrap")?.remove();
         const wrap = document.createElement("div");
         wrap.className = "stamp-wrap";
-        if (live.state === "sold" && leader) {
-          const mine = live.team === myTeam;
-          wrap.innerHTML = `<div class="stamp" style="--c:${safe(leader.color)};padding:18px 26px">${crest(live.team, "lg")}<div class="stamp-word" style="font-size:64px">${mine ? "YOURS!" : "SOLD!"}</div><div class="stamp-sub" style="font-size:18px">${safe(leader.name)} · ${money(live.amount, s)}</div>${live.forced ? `<div class="stamp-sub" style="font-size:14px;opacity:.85">Auto-assigned: only team left that needs one</div>` : ""}</div>`;
+        if (live.state === "sold" && leader && live.team === myTeam) {
+          // our team won the player: a green victory moment
+          wrap.classList.add("win");
+          wrap.innerHTML = `<div class="win-card">
+              <div class="win-rays" aria-hidden="true"></div>
+              <div class="win-trophy" aria-hidden="true">🏆</div>
+              <div class="win-word">YOURS!</div>
+              <div class="win-player">${safe(p.name)}</div>
+              <div class="win-sub">joins ${safe(leader.name)} for ${money(live.amount, s)}</div>
+              ${live.forced ? `<div class="win-sub" style="opacity:.85;font-size:13px">Auto-assigned: only team left that needed one</div>` : ""}
+            </div>`;
           plot.appendChild(wrap);
-          if (mine) { confetti(plot, leader.color); sounds.sold(); }
+          celebrate();
+          sounds.sold();
+          try { navigator.vibrate && navigator.vibrate([90, 60, 90, 60, 260]); } catch (e) {}
+        } else if (live.state === "sold" && leader) {
+          wrap.innerHTML = `<div class="stamp" style="--c:${safe(leader.color)};padding:18px 26px">${crest(live.team, "lg")}<div class="stamp-word" style="font-size:64px">SOLD!</div><div class="stamp-sub" style="font-size:18px">${safe(leader.name)} · ${money(live.amount, s)}</div>${live.forced ? `<div class="stamp-sub" style="font-size:14px;opacity:.85">Auto-assigned: only team left that needs one</div>` : ""}</div>`;
+          plot.appendChild(wrap);
         } else {
           wrap.innerHTML = `<div class="stamp unsold" style="padding:18px 26px"><div class="stamp-word" style="font-size:56px">UNSOLD</div></div>`;
           plot.appendChild(wrap);

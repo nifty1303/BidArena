@@ -898,7 +898,35 @@
     $("pauseBtn").onclick = togglePause;
     $("addTimeBtn").onclick = addTime;
     $("soldBtn").onclick = () => finalize(false);
-    $("unsoldBtn").onclick = async () => { if (!L().team || await confirmBox("Mark unsold?", "There are bids on this player. They'll be cleared and the player goes to the unsold pool.", { ok: "Mark unsold", danger: true })) finalize(true); };
+    $("unsoldBtn").onclick = askUnsold;
+
+    // Unsold needs two confirmations, three when someone has already bid.
+    // The clock is held while the host decides, so the player can't be sold by the timer meanwhile.
+    let confirmingUnsold = false;
+    async function askUnsold() {
+      const live = L();
+      if (confirmingUnsold || !["bidding", "paused"].includes(live.state)) return;
+      confirmingUnsold = true;
+      const s = S(), p = A.players[live.pid] || {}, leader = live.team && A.teams[live.team];
+      const heldClock = live.state === "bidding";
+      if (heldClock) await togglePause();
+      const steps = leader ? [
+        ["Mark unsold?", `${leader.name} is leading with ${money(live.amount, s)} for ${p.name}.`, "Yes, continue"],
+        ["Are you sure?", `${leader.name}'s bid of ${money(live.amount, s)} will be thrown away and ${p.name} goes to the unsold pool.`, "Yes, I'm sure"],
+        ["Last check", `Mark ${p.name} UNSOLD and clear the bid of ${money(live.amount, s)}? This can't be undone.`, "Mark unsold"]
+      ] : [
+        ["Mark unsold?", `No one has bid on ${p.name} yet.`, "Yes, continue"],
+        ["Are you sure?", `${p.name} goes to the unsold pool.`, "Mark unsold"]
+      ];
+      let ok = true;
+      for (let i = 0; i < steps.length && ok; i++) {
+        const [title, msg, label] = steps[i];
+        ok = await confirmBox(`${title} (${i + 1} of ${steps.length})`, msg, { ok: label, cancel: "No, keep bidding", danger: true, icon: i === steps.length - 1 ? "⚠️" : "❔" });
+      }
+      confirmingUnsold = false;
+      if (ok && ["bidding", "paused"].includes(L().state)) return finalize(true);
+      if (heldClock && L().state === "paused") await togglePause();     // cancelled: the clock carries on
+    }
     $("restartBtn").onclick = async () => { if (await confirmBox("Restart bidding?", "Bidding on this player starts again from the base price.", { ok: "Restart", icon: "↺" })) startLot(L().pid, { skipFair: true }); };
     $("undoBtn").onclick = undoLastSale;
     $("pool").addEventListener("click", e => { const b = e.target.closest("[data-call]"); if (b) startLot(b.dataset.call); });

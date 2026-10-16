@@ -36,6 +36,8 @@
 
         <!-- Host controls -->
         <div id="controls" class="controls">
+          <label class="next-from" title="Pick a category to draw the next player from, at any time">Next from
+            <select id="nextFrom" class="select"></select></label>
           <button id="nextBtn" class="btn btn-sun btn-lg">Next player ▶</button>
           <button id="pickBtn" class="btn btn-dark">Choose player</button>
           <span class="sep"></span>
@@ -439,7 +441,7 @@
         if (changed || true) {
           const sold = players().filter(([, p]) => p.status === "sold").length;
           const unsold = players().filter(([, p]) => p.status === "unsold").length;
-          const q = queue();
+          const q = plannedNext(live.pid || "");
           const first = !Object.keys(A.sales || {}).length && !players().some(([, p]) => p.status === "unsold");
           const html = bannerHTML(bannerSrcs, "stage-banner") + (first && q ? `
             <div class="idle">
@@ -514,7 +516,7 @@
         lastSeq = live.seq;
       }
       $("leader").innerHTML = leader
-        ? `<span class="leader" style="border-color:${safe(leader.color)}">${crest(live.team)}${safe(leader.name)}</span>`
+        ? `<span class="leader" style="border-color:${safe(leader.color)}">${crest(live.team)}<span class="ld-txt"><small>${live.state === "sold" ? "Bought by" : "Leading bid"}</small>${safe(leader.name)}</span></span>`
         : `<span class="leader none">No bids yet. First bid is ${money(live.base, s)}</span>`;
       const allBids = Object.values((A.bids && A.bids[live.pid]) || {});
       const bids = allBids.sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 6);
@@ -629,12 +631,13 @@
     function renderControls() {
       const live = L(), s = S();
       const onLot = ["bidding", "paused"].includes(live.state);
-      const q = queue();
+      drawNextFrom();
+      const q = plannedNext(onLot || live.state === "closing" ? live.pid : "");
       $("nextBtn").disabled = onLot || live.state === "closing" || !q;
       $("pickBtn").disabled = onLot || live.state === "closing" || !pending().length;
-      $("queueNote").textContent = q ? `Queue: ${q.label} · ${q.left} to go` : "Queue empty: call from the unsold pool or end the auction.";
+      $("queueNote").textContent = q ? `Next: ${q.label} · ${q.left} to go${nextFrom ? "" : " · pick a category in “Next from” to draw from it"}` : "Queue empty: call from the unsold pool or end the auction.";
       // white "Next up" line under the stage: the player after the one on screen
-      const nx = onLot || live.state === "closing" || ["sold", "unsold"].includes(live.state) ? queue(live.pid) : q;
+      const nx = ["sold", "unsold"].includes(live.state) ? plannedNext(live.pid) : q;
       const np = nx && A.players[nx.pid];
       $("nextUp").hidden = !np;
       if (np) $("nextUp").innerHTML = `<span class="nu-label">Next up</span><b>${safe(np.name)}</b><span class="nu-cat">${safe(nx.label)}${positionOf(np, s) ? ` · ${safe(positionOf(np, s))}` : ""}</span>`;
@@ -701,9 +704,44 @@
     }
 
     function nextPlayer() {
-      const q = queue();
-      if (q) startLot(q.pid);
+      const q = plannedNext();
+      if (q) { nextDraw = null; startLot(q.pid); }
     }
+
+    // ---------- the host can choose the category to draw the next player from, at any point ----------
+    // "In order" follows the normal queue. A category draws a random waiting player from it.
+    let nextFrom = "", nextDraw = null;
+    try { nextFrom = localStorage.getItem(`nextFrom_${code}`) || ""; } catch (e) {}
+    const pendingIn = cid => pending().filter(([, p]) => p.cat === cid);
+    function plannedNext(skip = "") {
+      if (nextFrom) {
+        const cat = catList(S()).find(c => c.id === nextFrom);
+        const list = cat ? pendingIn(nextFrom).filter(([id]) => id !== skip) : [];
+        const stillGood = nextDraw && nextDraw.cat === nextFrom && nextDraw.pid !== skip && list.some(([id]) => id === nextDraw.pid);
+        if (!stillGood) nextDraw = list.length ? { cat: nextFrom, pid: list[Math.floor(Math.random() * list.length)][0] } : null;
+        if (nextDraw) return { pid: nextDraw.pid, label: `${cat.name} · random pick`, left: list.length };
+        if (!skip) {                                    // that category is finished: back to the normal order
+          toast(`No ${cat ? cat.name : "players"} left to draw. Back to the normal order.`);
+          setNextFrom("");
+        }
+      }
+      return queue(skip);
+    }
+    function setNextFrom(v) {
+      nextFrom = v; nextDraw = null;
+      try { localStorage.setItem(`nextFrom_${code}`, v); } catch (e) {}
+      if (A && A.status === "live") renderControls();
+      if (A && A.status === "live" && ["idle", "sold", "unsold"].includes(L().state)) { $("stage").dataset.idle = ""; renderStage(); }
+    }
+    let nextFromKey = "";
+    function drawNextFrom() {
+      const opts = [["", "In order (auto)"], ...catList(S()).map(c => { const n = pendingIn(c.id).length; return [c.id, `${c.name} · ${n} left${n ? " · random" : ""}`, !n]; })];
+      const key = JSON.stringify(opts) + nextFrom;
+      if (key === nextFromKey) return;
+      nextFromKey = key;
+      $("nextFrom").innerHTML = opts.map(([v, l, off]) => `<option value="${v}" ${v === nextFrom ? "selected" : ""} ${off && v !== nextFrom ? "disabled" : ""}>${safe(l)}</option>`).join("");
+    }
+    $("nextFrom").onchange = e => setNextFrom(e.target.value);
 
     // The host places a bid for a team (paddle raised in the room)
     async function hostBid(tid) {

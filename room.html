@@ -521,7 +521,6 @@
           <p class="lot-count"><span class="dot" style="--c:${cc}"></span>${safe(cat.name)}${live.round > 1 ? " · unsold round" : ""} · bids go up by ${money(stepFor(live.cat, s), s)}</p>
           <div class="lot">
             <div class="pcard" style="--cc:${cc}">
-              <span class="pcard-cat">${safe(cat.name)}</span>
               <div id="lotPhoto" class="pcard-init">${safe(initials(p.name))}</div>
               <div class="pcard-foot"><b>${safe(p.name)}</b><span>${safe(positionOf(p, s) || `Base ${money(live.base, s)}`)}</span></div>
             </div>

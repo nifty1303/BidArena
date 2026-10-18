@@ -148,6 +148,8 @@
       const r = ref(db, `auctionViewers/${code}/${me.uid}`);
       onDisconnect(r).remove().catch(() => {});
       set(r, { name, at: serverTimestamp() }).catch(() => {});
+      // the permanent log: everyone who watched, kept after they leave (for the total at the end)
+      set(ref(db, `auctionWatchLog/${code}/${me.uid}`), { name, at: serverTimestamp() }).catch(() => {});
     }
     function clearViewer() {
       if (!viewerKey || !code || !me) return;

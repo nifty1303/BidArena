@@ -705,7 +705,7 @@
       drawNextFrom();
       const q = plannedNext(onLot || live.state === "closing" ? live.pid : "");
       $("nextBtn").disabled = onLot || live.state === "closing" || !q;
-      $("pickBtn").disabled = onLot || live.state === "closing" || !pending().length;
+      $("pickBtn").disabled = onLot || live.state === "closing" || !(pending().length || unsoldAll().length);
       $("queueNote").textContent = q ? `Next: ${q.label} · ${q.left} to go${nextFrom ? "" : " · pick a category in “Next from” to draw from it"}` : "Queue empty: call from the unsold pool or end the auction.";
       // white "Next up" line under the stage: the player after the one on screen
       // "Next up" is for the auctioneer only: never on the display, and never saved where phones could read it
@@ -796,15 +796,26 @@
     let nextFrom = "", nextDraw = null;
     try { nextFrom = localStorage.getItem(`nextFrom_${code}`) || ""; } catch (e) {}
     const pendingIn = cid => pending().filter(([, p]) => p.cat === cid);
+    // "u:" = the whole unsold pool, "u:<cat>" = unsold players of one category
+    const unsoldAll = () => players().filter(([, p]) => p.status === "unsold");
+    const unsoldIn = cid => unsoldAll().filter(([, p]) => !cid || p.cat === cid);
+    function drawSource(v) {
+      if (v.startsWith("u:")) {
+        const cid = v.slice(2), cat = catList(S()).find(c => c.id === cid);
+        return { list: unsoldIn(cid), name: cid ? `${cat ? cat.name : "?"} · unsold` : "Unsold pool", ok: !cid || !!cat };
+      }
+      const cat = catList(S()).find(c => c.id === v);
+      return { list: cat ? pendingIn(v) : [], name: cat ? cat.name : "", ok: !!cat };
+    }
     function plannedNext(skip = "") {
       if (nextFrom) {
-        const cat = catList(S()).find(c => c.id === nextFrom);
-        const list = cat ? pendingIn(nextFrom).filter(([id]) => id !== skip) : [];
+        const src = drawSource(nextFrom), cat = { name: src.name || "players" };
+        const list = src.list.filter(([id]) => id !== skip);
         const stillGood = nextDraw && nextDraw.cat === nextFrom && nextDraw.pid !== skip && list.some(([id]) => id === nextDraw.pid);
         if (!stillGood) nextDraw = list.length ? { cat: nextFrom, pid: list[Math.floor(Math.random() * list.length)][0] } : null;
         if (nextDraw) return { pid: nextDraw.pid, label: `${cat.name} · random pick`, left: list.length };
         if (!skip) {                                    // that category is finished: back to the normal order
-          toast(`No ${cat ? cat.name : "players"} left to draw. Back to the normal order.`);
+          toast(`No ${cat.name} left to draw. Back to the normal order.`);
           setNextFrom("");
         }
       }
@@ -819,10 +830,14 @@
     let nextFromKey = "";
     function drawNextFrom() {
       const opts = [["", "In order (auto)"], ...catList(S()).map(c => { const n = pendingIn(c.id).length; return [c.id, `${c.name} · ${n} left${n ? " · random" : ""}`, !n]; })];
-      const key = JSON.stringify(opts) + nextFrom;
+      const nu = unsoldAll().length;
+      const uopts = [["u:", `All unsold · ${nu} left${nu ? " · random" : ""}`, !nu],
+        ...catList(S()).map(c => { const n = unsoldIn(c.id).length; return n || nextFrom === "u:" + c.id ? ["u:" + c.id, `${c.name} · ${n} unsold · random`, !n] : null; }).filter(Boolean)];
+      const key = JSON.stringify([opts, uopts]) + nextFrom;
       if (key === nextFromKey) return;
       nextFromKey = key;
-      $("nextFrom").innerHTML = opts.map(([v, l, off]) => `<option value="${v}" ${v === nextFrom ? "selected" : ""} ${off && v !== nextFrom ? "disabled" : ""}>${safe(l)}</option>`).join("");
+      const opt = ([v, l, off]) => `<option value="${v}" ${v === nextFrom ? "selected" : ""} ${off && v !== nextFrom ? "disabled" : ""}>${safe(l)}</option>`;
+      $("nextFrom").innerHTML = `<optgroup label="Waiting players">${opts.map(opt).join("")}</optgroup><optgroup label="Unsold pool">${uopts.map(opt).join("")}</optgroup>`;
     }
     $("nextFrom").onchange = e => setNextFrom(e.target.value);
 
@@ -982,18 +997,21 @@
         <section class="card modal">
           <button class="icon-btn modal-x" aria-label="Close">✕</button>
           <h2 class="title" style="font-size:28px">Choose the next player</h2>
-          <p class="hint">Players who haven't been auctioned yet. Unsold players are in the pool beside the teams.</p>
+          <p class="hint">Players waiting to be auctioned, then the unsold pool. Tap anyone to call them now.</p>
           <input class="input" id="pickSearch" placeholder="Search by name or category" style="margin-top:12px">
           <ul class="pick-list" id="pickList"></ul>
         </section>`;
       document.body.appendChild(back);
       const draw = term => {
         const t = term.trim().toLowerCase();
-        back.querySelector("#pickList").innerHTML = pending()
-          .filter(([, p]) => !t || `${p.name} ${catOf(p).name}`.toLowerCase().includes(t))
-          .map(([id, p]) => `<li><button data-pick="${id}"><span class="av">${safe(initials(p.name))}</span>
-            <span class="grow"><b>${safe(p.name)}</b> <span class="muted">· ${safe(catOf(p).name)}</span>${playerLine(p, S()) ? `<br><small class="muted">${safe(playerLine(p, S()))}</small>` : ""}</span>
-            <span>${money(catOf(p).base, S())}</span></button></li>`).join("") || `<li class="empty">No one matches.</li>`;
+        const match = ([, p]) => !t || `${p.name} ${catOf(p).name} ${p.status === "unsold" ? "unsold" : ""}`.toLowerCase().includes(t);
+        const row = ([id, p]) => `<li><button data-pick="${id}"><span class="av">${safe(initials(p.name))}</span>
+            <span class="grow"><b>${safe(p.name)}</b> <span class="muted">· ${safe(catOf(p).name)}</span>${p.status === "unsold" ? ` <span class="unsold-tag">Unsold${(p.rounds || 0) > 1 ? " ×" + p.rounds : ""}</span>` : ""}${playerLine(p, S()) ? `<br><small class="muted">${safe(playerLine(p, S()))}</small>` : ""}</span>
+            <span>${money(catOf(p).base, S())}</span></button></li>`;
+        const waiting = pending().filter(match), uns = unsoldAll().filter(match);
+        back.querySelector("#pickList").innerHTML = (waiting.length ? `<li class="pick-group">Waiting · ${waiting.length}</li>` + waiting.map(row).join("") : "")
+          + (uns.length ? `<li class="pick-group">Unsold pool · ${uns.length}</li>` + uns.map(row).join("") : "")
+          || `<li class="empty">No one matches.</li>`;
       };
       draw("");
       back.querySelector("#pickSearch").oninput = e => draw(e.target.value);

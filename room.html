@@ -59,7 +59,7 @@
           <p>Bid for a team (for paddles raised in the room)</p>
           <div id="qbRow" class="qb-row"></div>
         </div>
-        <div class="ticker" id="ticker" hidden><span class="ticker-label">🔨 Sold</span><div class="ticker-track" id="tickerTrack"></div></div>
+        <div class="ticker" id="ticker" hidden><span class="ticker-label">🔨 Sold</span><div class="ticker-view"><div class="ticker-track" id="tickerTrack"></div></div></div>
         <p class="kbd">Shortcuts: <b>N</b> next · <b>P</b> or <b>Space</b> pause / resume · <b>T</b> +10s · <b>S</b> sold · <b>U</b> unsold · <b>F</b> full screen · <b>Q</b> big QR code</p>
         <p id="queueNote" class="kbd" style="margin-top:6px"></p>
         <p id="timeupNote" class="timeup-note" hidden></p>
@@ -312,15 +312,17 @@
     function renderTicker() {
       const s = S();
       const recent = sales().slice(-12).reverse();
-      const key = recent.map(x => x.pid).join(",");
+      // Redraw when a sale lands or a team picture finishes loading
+      const key = recent.map(x => x.pid + ":" + x.team + ":" + (logoOf(logos, x.team) ? 1 : 0)).join(",");
       if (key === tickerKey) return;
       tickerKey = key;
       $("ticker").hidden = !recent.length;
       const items = recent.map(x => {
         const p = A.players[x.pid] || {}, t = A.teams[x.team] || {};
-        return `<span>${safe(p.name)} → ${crestHTML(t, logoOf(logos, x.team), "sm")} ${safe(t.name)} <b>${money(x.price, s)}</b></span>`;
+        return `<div class="tk-item"><span class="tk-player">${safe(p.name)}</span><span class="tk-arrow">→</span>${crestHTML(t, logoOf(logos, x.team), "sm")}<span class="tk-team">${safe(t.name)}</span><b class="tk-price">${money(x.price, s)}</b></div>`;
       }).join("");
       $("tickerTrack").innerHTML = items + items;   // twice, so it loops seamlessly
+      $("tickerTrack").style.animationDuration = Math.max(20, recent.length * 7) + "s";
     }
 
     // ---------- before the auction starts ----------

@@ -23,7 +23,7 @@
       catList, catMax, squadLimits, squadText, catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine, purseLeftOf,
       playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
       onDisconnect, watchConnection, cleanName, nameKeyOf, currentUser, isHostAccount, confirmBox,
-      audioReady, showBreak, squadCardBlob, squadCSV, shareOrDownload, downloadCSV, refreshTourLogo, clearTourLogo, renderSquadShow, catIntroHTML, introOn
+      audioReady, showBreak, squadCardBlob, squadCSV, shareOrDownload, downloadCSV, refreshTourLogo, clearTourLogo, renderSquadShow, catIntroHTML, introOn, lotSounds
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Live auctions");
@@ -35,7 +35,7 @@
     let code = null, A = null;
     let myTeam = null;           // team id, or null when just watching
     let stopListen = null;
-    let lastKey = "", lastSeq = -1, wasLeading = false;
+    let lastKey = "", lastSeq = -1, wasLeading = false, skipBidSeq = -1;
     let myWish = {};             // this team's private wishlist
     let stopWish = null;
     let lastGoing = "";
@@ -704,7 +704,7 @@
       // Outbid: buzz so they notice
       const leadingNow = !!myTeam && live.team === myTeam;
       if (wasLeading && !leadingNow && live.state === "bidding") {
-        sounds.outbid();
+        sounds.outbid(); skipBidSeq = live.seq;   // the outbid buzz replaces the bid sound
         try { navigator.vibrate && navigator.vibrate([120, 60, 120]); } catch (e) {}
         plot.classList.remove("outbid-flash"); void plot.offsetWidth; plot.classList.add("outbid-flash");
       }
@@ -768,6 +768,7 @@
 
     function tick() {
       const live = L(), s = S();
+      lotSounds(live, skipBidSeq);
       const bar = $("pBar");
       if (!bar || !live.timerMs) return;
       let left = live.state === "paused" ? (live.pausedLeft || 0) : Math.max(0, endsAt(live) - serverNow());
@@ -777,7 +778,7 @@
       bar.classList.toggle("low", live.state === "bidding" && secs <= 5);
       $("pLeft").textContent = live.state === "paused" ? "Paused" : live.state === "bidding" ? `${secs}s left` : "";
       const introEl = document.getElementById("phoneIntro");
-      if (introOn(live)) { if (!introEl || introEl.dataset.cat !== live.cat) { introEl?.remove(); document.body.insertAdjacentHTML("beforeend", catIntroHTML(A, live).replace('class="cat-intro"', 'id="phoneIntro" class="cat-intro phone"')); document.getElementById("phoneIntro").dataset.cat = live.cat; } }
+      if (introOn(live)) { if (!introEl || introEl.dataset.cat !== live.cat) { introEl?.remove(); document.body.insertAdjacentHTML("beforeend", catIntroHTML(A, live).replace('class="cat-intro"', 'id="phoneIntro" class="cat-intro phone"')); document.getElementById("phoneIntro").dataset.cat = live.cat; sounds.intro(); } }
       else if (introEl) introEl.remove();
       const going = live.state === "paused" ? "paused" : live.state === "bidding" && left <= 0 ? "timeup" : live.state === "bidding" && live.team ? (secs <= 2 && secs > 0 ? "twice" : secs <= 4 && secs > 2 ? "once" : "") : "";
       if (going !== lastGoing) {
@@ -822,6 +823,8 @@
       btn.disabled = true;
       btn.innerHTML = `Bidding ${money(st.amount, S())}…`;
       const key = push(ref(db, `auctions/${code}/bids/${live.pid}`)).key;
+      skipBidSeq = (live.seq || 0) + 1;   // our own bid: the sound plays right on the tap
+      sounds.bid();
       try {
         // The database accepts only one bid per step, so if two teams tap at once only the first counts
         await update(ref(db), {
@@ -831,7 +834,6 @@
           },
           [`auctions/${code}/bids/${live.pid}/${key}`]: { team: myTeam, amount: st.amount, at: serverTimestamp(), by: (myMember && myMember.name) || "" }
         });
-        sounds.bid();
         try { navigator.vibrate && navigator.vibrate(40); } catch (e) {}
       } catch (e) {
         $("pStatus").textContent = "Someone else bid first. Tap again at the new price.";

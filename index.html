@@ -23,7 +23,7 @@
       catList, catMax, squadLimits, squadText, catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine, purseLeftOf,
       playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
       onDisconnect, watchConnection, cleanName, nameKeyOf, currentUser, isHostAccount, confirmBox,
-      audioReady, showBreak, squadCardBlob, squadCSV, shareOrDownload, downloadCSV, refreshTourLogo, clearTourLogo
+      audioReady, showBreak, squadCardBlob, squadCSV, shareOrDownload, downloadCSV, refreshTourLogo, clearTourLogo, renderSquadShow, catIntroHTML, introOn
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Live auctions");
@@ -658,6 +658,7 @@
       const changed = key !== lastKey;
       bidBarShow(!!team() && ["bidding", "paused"].includes(live.state) && !!(A.players || {})[live.pid]);
       if (live.state === "idle" || !live.pid || !(A.players || {})[live.pid]) {
+        document.getElementById("phoneIntro")?.remove();
         if (changed) { plot.innerHTML = idleHTML(); animate(plot); }
         lastKey = key; lastSeq = -1;
         return;
@@ -751,6 +752,7 @@
       let amount = nextBid(live, s);
       for (let k = 1; k < jump; k++) amount += stepFor(live.cat, s);
       if (!approved()) return { ok: false, why: "Waiting for the host to approve you", amount };
+      if (introOn(live)) return { ok: false, why: "New category: bidding opens in a moment", amount };
       if (!isOnline) return { ok: false, why: "Reconnecting…", amount };
       if (live.state === "paused") return { ok: false, why: "Paused by the host", amount };
       if (live.state !== "bidding") return { ok: false, why: "", amount };
@@ -774,6 +776,9 @@
       const secs = Math.ceil(left / 1000);
       bar.classList.toggle("low", live.state === "bidding" && secs <= 5);
       $("pLeft").textContent = live.state === "paused" ? "Paused" : live.state === "bidding" ? `${secs}s left` : "";
+      const introEl = document.getElementById("phoneIntro");
+      if (introOn(live)) { if (!introEl || introEl.dataset.cat !== live.cat) { introEl?.remove(); document.body.insertAdjacentHTML("beforeend", catIntroHTML(A, live).replace('class="cat-intro"', 'id="phoneIntro" class="cat-intro phone"')); document.getElementById("phoneIntro").dataset.cat = live.cat; } }
+      else if (introEl) introEl.remove();
       const going = live.state === "paused" ? "paused" : live.state === "bidding" && left <= 0 ? "timeup" : live.state === "bidding" && live.team ? (secs <= 2 && secs > 0 ? "twice" : secs <= 4 && secs > 2 ? "once" : "") : "";
       if (going !== lastGoing) {
         lastGoing = going;
@@ -800,7 +805,10 @@
     // any tap turns sound on (phones block it until the person touches the page)
     document.addEventListener("pointerdown", () => { unlockAudio(); setTimeout(() => { if ($("soundBtn") && audioReady()) $("soundBtn").hidden = true; }, 120); });
     // break countdown from the host
-    setInterval(() => showBreak(code && A ? A : null), 500);
+    setInterval(() => {
+      const shown = code && A ? renderSquadShow(A, (id, size) => crest(id, size), { closable: true }) : false;
+      showBreak(code && A && !shown ? A : null, { compact: true });
+    }, 500);
 
     let placing = false;
     async function placeBid(jump) {

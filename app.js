@@ -945,3 +945,116 @@ export async function refreshTourLogo(code, A) {
   catch (e) { setTourLogo(""); }
 }
 export const clearTourLogo = () => { tourKey = ""; setTourLogo(""); };
+
+
+// ============================================================
+// "Squads so far" screen: all teams side by side, or team by team (shared by the room, display and phones)
+// ============================================================
+let showIdx = 0, showNext = 0, showKey = "", showMode = "", showDismissed = "";
+
+    // All teams side by side: what each has bought, spent, has left, can still bid, and still needs
+function squadSummaryHTML(A, crest) {
+      const s = A.settings || {}, cats = catList(s), lim = squadLimits(s), list = Object.entries(A.teams || {});
+      return `<div class="sq-sum" style="--n:${Math.min(list.length, 5)}">${list.map(([id, t], k) => {
+        const squad = teamSquad(A, id), spent = t.spent || 0, left = purseLeftOf(t, s), budget = teamBudget(t, s);
+        const top = squad.reduce((m, p) => (!m || (p.price || 0) > (m.price || 0) ? p : m), null);
+        const avg = squad.length ? Math.round(spent / squad.length) : 0;
+        const power = Math.max(0, ...cats.map(c => (t.maxBid && t.maxBid[c.id]) || 0));
+        const needs = cats.map(c => [c, Math.max(0, c.min - ((t.cat && t.cat[c.id]) || 0))]).filter(([, n]) => n > 0);
+        return `<div class="sq-col" style="--c:${safe(t.color)};animation-delay:${k * 0.12}s">
+          <div class="sq-col-head">${crest(id, "lg")}<h3>${safe(t.name)}</h3></div>
+          <div class="sq-big"><b>${squad.length}</b><span>bought<br>of ${safe(squadText(s))}</span></div>
+          <div class="sq-money"><div><small>Spent</small><b>${money(spent, s)}</b></div><div><small>Left</small><b>${money(left, s)}</b></div></div>
+          <div class="sq-bar"><i style="width:${Math.max(0, Math.min(100, (left / (budget || 1)) * 100))}%"></i></div>
+          <dl>
+            <div><dt>Top buy</dt><dd>${top ? `${safe(top.name)} · <b>${money(top.price, s)}</b>` : "–"}</dd></div>
+            <div><dt>Average price</dt><dd>${avg ? money(avg, s) : "–"}</dd></div>
+            <div><dt>Can still bid up to</dt><dd><b>${power ? money(power, s) : "–"}</b></dd></div>
+            <div><dt>Still needs</dt><dd>${needs.length ? needs.map(([c, n]) => `${n} ${safe(c.name)}`).join(", ") : "✓ Minimums met"}${(t.count || 0) >= lim.max ? " · squad full" : ""}</dd></div>
+          </dl>
+        </div>`;
+      }).join("")}</div>`;
+    }
+// renderSquadShow(A, crest, { closable }) — call every half second. closable: phones can close it (until the host shows it again).
+export function renderSquadShow(A, crest, opts = {}) {
+      const on = A && A.status === "live" && (A.breakUntil || A.showSquads);
+      const onKey = on ? `${A.breakUntil || ""}|${A.showSquads || ""}` : "";
+      let el = document.getElementById("squadShow");
+      if (!on || (opts.closable && showDismissed === onKey)) { el?.remove(); showKey = ""; showMode = ""; return false; }
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "squadShow";
+        el.className = "sq-show";
+        el.innerHTML = `<div class="sq-top"><span class="tour-logo sq" data-tour-logo hidden></span><div class="sq-head"></div>${opts.closable ? `<button type="button" class="sq-close" aria-label="Close">✕</button>` : ""}</div><div class="sq-stage"></div><div class="sq-strip"></div>`;
+        if (opts.closable) el.querySelector(".sq-close").onclick = () => { showDismissed = onKey; el.remove(); };
+        document.body.appendChild(el);
+        showNext = 0;
+      }
+      const s = A.settings || {}, ids = Object.keys(A.teams || {});
+      if (!ids.length) return true;
+      // header: the break countdown, or the title
+      if (A.breakUntil) {
+        const left = Math.max(0, A.breakUntil - serverNow());
+        el.querySelector(".sq-head").innerHTML = `<span>☕ ${safe(A.breakMsg || "Short break")}</span><b>${left > 0 ? `Back in ${Math.floor(left / 60000)}:${String(Math.floor(left / 1000) % 60).padStart(2, "0")}` : "Back any moment"}</b><span>Squads so far</span>`;
+      } else {
+        const all = Object.values(A.players || {}), sold = all.filter(p => p.status === "sold");
+        el.querySelector(".sq-head").innerHTML = `<span>${safe(A.title || "Auction")}</span><b>Squads so far</b><span>${sold.length} sold · ${money(sold.reduce((n, p) => n + (p.price || 0), 0), s)} spent · ${all.filter(p => (p.status || "pending") === "pending").length} to come</span>`;
+      }
+      // summary of all teams first; "Play" goes team by team; or one team pinned
+      const mode = A.squadFocus && A.teams[A.squadFocus] ? "team" : A.squadMode === "play" ? "play" : "summary";
+      if (mode !== showMode) { showMode = mode; showKey = ""; showIdx = 0; showNext = 0; }
+      el.classList.toggle("summary", mode === "summary");
+      if (mode === "summary") {
+        const key = "sum" + JSON.stringify(Object.entries(A.teams || {}).map(([id, t]) => [id, t.spent, t.purseLeft, t.count, t.maxBid]));
+        if (key !== showKey) { showKey = key; el.querySelector(".sq-stage").innerHTML = squadSummaryHTML(A, crest); }
+        el.querySelector(".sq-strip").innerHTML = "";
+        return true;
+      }
+      // which team
+      const focus = A.squadFocus && A.teams[A.squadFocus] ? A.squadFocus : null;
+      if (!focus && Date.now() >= showNext) {
+        if (showNext) showIdx = (showIdx + 1) % ids.length;
+        const n = teamSquad(A, ids[showIdx % ids.length]).length;
+        showNext = Date.now() + Math.min(14000, 7000 + n * 350);           // longer for bigger squads
+      }
+      const id = focus || ids[showIdx % ids.length], t = A.teams[id];
+      const squad = teamSquad(A, id), cats = catList(s);
+      const top = squad.reduce((m, p) => (!m || (p.price || 0) > (m.price || 0) ? p : m), null);
+      const key = JSON.stringify([id, t.purseLeft, t.spent, squad.map(p => [p.name, p.price])]);
+      if (key !== showKey) {
+        showKey = key;
+        el.querySelector(".sq-stage").innerHTML = `
+          <div class="sq-card" style="--c:${safe(t.color)}">
+            <div class="sq-team">${crest(id, "xl")}
+              <div><h2>${safe(t.name)}</h2>
+                <p>${squad.length} player${squad.length === 1 ? "" : "s"} · spent <b>${money(t.spent || 0, s)}</b> · <b>${money(purseLeftOf(t, s), s)}</b> left</p></div></div>
+            ${squad.length ? `<ol class="sq-list ${squad.length > 8 ? "two" : ""}">${squad.map((p, k) => `
+              <li style="animation-delay:${0.15 + k * 0.05}s" class="${p === top && squad.length > 1 ? "top" : ""}">
+                <span><b>${safe(p.name)}</b><small>${safe([positionOf(p, s), (cats.find(c => c.id === p.cat) || {}).name].filter(Boolean).join(" · "))}</small></span>
+                <em>${p === top && squad.length > 1 ? "⭐ " : ""}${money(p.price, s)}</em></li>`).join("")}</ol>`
+              : `<p class="sq-empty">No players bought yet</p>`}
+          </div>`;
+      }
+      el.querySelector(".sq-strip").innerHTML = ids.map(tid => {
+        const tt = A.teams[tid];
+        return `<div class="sq-chip ${tid === id ? "on" : ""}" style="--c:${safe(tt.color)}">${crest(tid, "sm")}<span><b>${safe(tt.name)}</b><small>${(tt.count || 0)} · ${money(purseLeftOf(tt, s), s)} left</small></span></div>`;
+      }).join("");
+      return true;
+    }
+
+// ============================================================
+// Category announcement: shown on every screen when the next player starts a new category
+// ============================================================
+export const introOn = live => !!(live && live.intro && live.state === "bidding" && serverNow() < (live.clockFrom || 0) - 800);
+export function catIntroHTML(A, live) {
+  const s = A.settings || {}, c = catList(s).find(x => x.id === live.cat);
+  if (!c) return "";
+  const waiting = Object.values(A.players || {}).filter(p => p.cat === c.id && (p.status || "pending") === "pending").length;
+  return `<div class="cat-intro" style="--cc:${catColour(s, c.id)}">
+      <div class="ci-card">
+        <p class="ci-label">Now up</p>
+        <h2>${safe(c.name)}</h2>
+        <p class="ci-facts"><span>${waiting} player${waiting === 1 ? "" : "s"}</span><span>Base ${money(c.base, s)}</span><span>+${money(c.step, s)} a bid</span><span>Each team buys ${c.min}${c.max ? "–" + c.max : "+"}</span></p>
+      </div>
+    </div>`;
+}

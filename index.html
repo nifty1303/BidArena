@@ -11,7 +11,7 @@
 </head>
 <body data-sport="home">
   <main class="wrap phone">
-    <div class="topbar"><span id="brandSlot"></span><span class="row" style="gap:8px"><span id="acctSlot"></span><a class="host-pill" id="hostPill" href="host.html"><span aria-hidden="true">🔨</span> Host an auction</a></span></div>
+    <div class="topbar"><span class="row" style="gap:10px;flex-wrap:nowrap;min-width:0"><span id="brandSlot"></span><span class="tour-logo top" data-tour-logo hidden></span></span><span class="row" style="gap:8px"><span id="acctSlot"></span><a class="host-pill" id="hostPill" href="host.html"><span aria-hidden="true">🔨</span> Host an auction</a></span></div>
     <section id="view"></section>
   </main>
   <div id="connBar" class="conn-bar" hidden>⚠️ Connection lost. Reconnecting… Your team and approval are kept.</div>
@@ -23,7 +23,7 @@
       catList, catMax, squadLimits, squadText, catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine, purseLeftOf,
       playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
       onDisconnect, watchConnection, cleanName, nameKeyOf, currentUser, isHostAccount, confirmBox,
-      audioReady, showBreak, squadCardBlob, squadCSV, shareOrDownload, downloadCSV
+      audioReady, showBreak, squadCardBlob, squadCSV, shareOrDownload, downloadCSV, refreshTourLogo, clearTourLogo
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Live auctions");
@@ -186,7 +186,7 @@
     function showCodeForm(message = "") {
       if (stopListen) { stopListen(); stopListen = null; }
       code = null; A = null; myTeam = null;
-      bidBarOff(); setPageBackground(null); bannerKey = null; bannerSrcs = [];
+      bidBarOff(); setPageBackground(null); bannerKey = null; bannerSrcs = []; clearTourLogo();
       applySportTheme(null);
       setWide(true);
       $("hostPill").hidden = false;
@@ -344,6 +344,7 @@
       code = c;
       A = snap.val();
       applySportTheme(A.settings && A.settings.sport);
+      refreshTourLogo(c, A);
       await refreshBanners();
       // Already joined on this phone (even after a disconnect or closing the browser): carry on
       const t = params.get("t"), k = params.get("k");
@@ -376,6 +377,7 @@
       view.innerHTML = `
         ${bannerSlot()}
         <div class="join-hero">
+          <span class="tour-logo showcase-logo" data-tour-logo hidden></span>
           <h1 class="title">${safe(A.title || "Auction")}</h1>
           <p class="lead">${preset ? "Ask the host to let you bid" : bid ? "Bidding for a team" : "Watch the auction live"}</p>
         </div>
@@ -478,6 +480,7 @@
         if (myTeam && !(A.teams || {})[myTeam]) myTeam = null;
         render();
         refreshBanners();
+        refreshTourLogo(code, A);
         setViewer();
         loadTeamLogos(code, A.teams, logos).then(changed => { if (changed) { $("liveShell")?.remove(); lastKey = ""; render(); } });
       });
@@ -544,6 +547,7 @@
         view.innerHTML = `
           ${bannerSlot()}
           <div class="card" style="text-align:center">
+            <span class="tour-logo showcase-logo" data-tour-logo hidden></span>
             <h2 class="title" style="font-size:30px">${safe(A.title || "Auction")}</h2>
             <p class="lead">${team() ? `You're bidding for <b>${safe(team().name)}</b>.` : "You're watching."} Waiting for the host to start…</p>
             <p class="hint">${Object.keys(A.players || {}).length} players · ${Object.keys(A.teams || {}).length} teams</p>
@@ -633,6 +637,7 @@
       if (!first) return `<div class="idle" style="padding:34px 10px"><h2 class="title" style="font-size:26px">Waiting for the next player…</h2>
         <p class="lead" style="margin-top:8px">${sold} sold · ${waiting} still to come</p></div>`;
       return `<div class="welcome">
+          <span class="tour-logo showcase-logo" data-tour-logo hidden></span>
           <p class="eyebrow" style="margin:0">${t ? "You're in" : "Watching live"}</p>
           <h2 class="title">Welcome${name ? `, ${safe(name)}` : ""}!</h2>
           <p class="lead">${t ? `You're bidding for <b>${safe(t.name)}</b> in <b>${safe(A.title || "the auction")}</b>.` : `You're watching <b>${safe(A.title || "the auction")}</b> live.`}</p>
@@ -953,6 +958,7 @@
       bidBarOff();
       view.innerHTML = `
         ${bannerSlot()}
+        <span class="tour-logo showcase-logo" data-tour-logo hidden></span>
         <h1 class="title" style="margin-bottom:6px">Squads <span>revealed</span></h1>
         <p class="lead" style="margin-bottom:14px">${safe(A.title || "Auction")} has finished.</p>
         <div class="results-grid">${teams.map(([id, t]) => {

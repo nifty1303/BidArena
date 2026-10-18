@@ -50,6 +50,7 @@
     <section id="editView" hidden>
       <div class="ed-top">
         <button id="backBtn" class="icon-btn" aria-label="Back to my auctions">‹</button>
+        <span class="tour-logo ed" data-tour-logo hidden></span>
         <input id="titleInput" class="ed-title" maxlength="60" placeholder="Name your auction" aria-label="Auction name">
         <span id="sportTag" class="sport-tag"></span>
         <span id="statusPill" class="pill setup">Setup</span>
@@ -86,7 +87,8 @@
       catColour, crestHTML, loadTeamLogos, logoOf,
       CURRENCIES, SPORTS, sportOf, sportName, sportIcon, schemaFor, sportDefaults, applySportTheme, mountSportPicker,
       readSheetFile, norm, matchRole, matchSub, matchHand, cleanAge,
-      dialog, alertBox, confirmBox, copyText, teamBudget, allMaxBids, compressBanner, loadBanners, mountBidders, initials, positionOf
+      dialog, alertBox, confirmBox, copyText, teamBudget, allMaxBids, compressBanner, loadBanners, mountBidders, initials, positionOf,
+      compressLogo, refreshTourLogo, clearTourLogo
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction setup");
@@ -154,6 +156,7 @@
     // ============================================================
     async function showList() {
       if (biddersMount) { biddersMount.stop(); biddersMount = null; }
+      clearTourLogo();
       code = null; A = null;
       applySportTheme(null);
       history.replaceState(null, "", "host.html");
@@ -164,9 +167,10 @@
       // shared auctions: their name and status can be changed by others, so read the latest
       await Promise.all(Object.entries(mine).filter(([, m]) => m.role === "editor").map(async ([c, m]) => {
         try {
-          const [t, st] = await Promise.all([get(ref(db, `auctions/${c}/title`)), get(ref(db, `auctions/${c}/status`))]);
+          const [t, st, lv] = await Promise.all([get(ref(db, `auctions/${c}/title`)), get(ref(db, `auctions/${c}/status`)), get(ref(db, `auctions/${c}/logoV`))]);
           if (t.exists()) m.title = t.val(); else m.gone = true;
           if (st.exists()) m.status = st.val();
+          m.logoV = lv.val() || 0;
         } catch (e) {}
       }));
       const rows = Object.entries(mine).sort((a, b) => (b[1].createdAt || 0) - (a[1].createdAt || 0));
@@ -174,7 +178,7 @@
         <li class="list-item"><span class="list-ico">🗑️</span><div class="grow"><p class="list-title">${safe(m.title || "Auction")}</p><p>The owner deleted this auction.</p></div>
           <button class="btn btn-light" data-leave="${c}">Remove from my list</button></li>` : `
         <li class="list-item">
-          <span class="list-ico" title="${safe(sportName(m.sport))}">${sportIcon(m.sport)}</span>
+          <span class="list-ico" title="${safe(sportName(m.sport))}" data-list-logo="${c}" data-logo-v="${m.logoV || ""}">${sportIcon(m.sport)}</span>
           <div class="grow">
             <p class="list-title">${safe(m.title || "Untitled auction")} <span class="pill ${m.status || "setup"}">${m.status === "live" ? "Live" : m.status === "ended" ? "Finished" : "Setup"}</span>${m.role === "editor" ? ` <span class="pill shared">Shared with you</span>` : ""}</p>
             <p>${safe(m.sport ? sportName(m.sport) : "Sport not set")} · code <b>${c}</b>${m.createdAt ? ` · created ${new Date(m.createdAt).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })}` : ""}</p>
@@ -185,6 +189,10 @@
           ${m.role === "editor" ? `<button class="icon-btn" data-leave="${c}" title="Leave this shared auction" aria-label="Leave shared auction">⎋</button>`
             : `<button class="icon-btn" data-del="${c}" title="Delete" aria-label="Delete auction">✕</button>`}
         </li>`).join("") : `<li class="empty">No auctions yet. Press <b>+ New auction</b> to set one up.</li>`;
+      list.querySelectorAll("[data-list-logo]").forEach(async el => {
+        if (!el.dataset.logoV) return;
+        try { const snap = await get(ref(db, `auctionPhotos/${el.dataset.listLogo}/logo`)); if (snap.exists()) { el.innerHTML = `<img src="${snap.val()}" alt="">`; el.classList.add("has-logo"); } } catch (e) {}
+      });
     }
 
     // ============================================================
@@ -301,13 +309,14 @@
         const copy = { owner: user.uid, title, status: "setup", createdAt: serverTimestamp(), settings: src.settings || {}, teams: teamsNew };
         if (Object.keys(playersNew).length) copy.players = playersNew;
         if (opt.photos && src.banners) copy.banners = src.banners;
+        if (opt.photos && src.logoV) copy.logoV = src.logoV;
         if (Object.keys(playersNew).length && src.imports) copy.imports = src.imports;
         await set(ref(db, `auctions/${nc}`), copy);
         await set(ref(db, `auctionSecrets/${nc}`), { teamPins });
-        await set(ref(db, `auctionsByOwner/${user.uid}/${nc}`), { title, sport: (src.settings || {}).sport || "", status: "setup", createdAt: serverTimestamp() });
+        await set(ref(db, `auctionsByOwner/${user.uid}/${nc}`), { title, sport: (src.settings || {}).sport || "", status: "setup", createdAt: serverTimestamp(), ...(opt.photos && src.logoV ? { logoV: src.logoV } : {}) });
         if (opt.photos) {
           const pics = (await get(ref(db, `auctionPhotos/${c}`))).val() || {};
-          const keep = Object.entries(pics).filter(([k]) => k.startsWith("b_") || (k.startsWith("t_") ? !!teamsNew[k.slice(2)] : !!playersNew[k]));
+          const keep = Object.entries(pics).filter(([k]) => k === "logo" || k.startsWith("b_") || (k.startsWith("t_") ? !!teamsNew[k.slice(2)] : !!playersNew[k]));
           for (let i = 0; i < keep.length; i += 15) {
             const batch = {};
             keep.slice(i, i + 15).forEach(([k, v]) => { batch[`auctionPhotos/${nc}/${k}`] = v; });
@@ -388,6 +397,7 @@
         showList(); return;
       }
       const sec2 = await get(ref(db, `auctionSecrets/${c}`));
+      refreshTourLogo(c, data);
       if (role === "owner" && data.ownerName !== (user.displayName || user.email)) set(ref(db, `auctions/${c}/ownerName`), user.displayName || user.email || "Host").catch(() => {});
       code = c;
       A = data;
@@ -547,6 +557,7 @@
              <label class="check switch-row"><input type="checkbox" id="sFair" ${s.fairForced ? "checked" : ""}>
                <span><b>Fair price for uncontested players</b><br><small>When only one team can still buy a player and it must (e.g. 3 teams each need exactly 1 of 3 players, so the last one has no rival), it gets the player at the lowest price paid in that category, not the base price. You confirm each time.</small></span></label>`)}
         </div>
+        <div style="margin-top:14px">${logoSecHTML()}</div>
         <div style="margin-top:14px">${bannerSecHTML()}</div>
         <div style="margin-top:14px">${readinessHTML()}</div>`;
       mountSportPicker($("sportPick"), s.sport, changeSport, { disabled: locked() });
@@ -557,6 +568,39 @@
     const MAX_BANNERS = 5;
     const bannerCache = {};
     const bannerIds = () => Object.entries(A.banners || {}).sort((a, b) => (a[1].order || 0) - (b[1].order || 0)).map(([id]) => id);
+    // ---------- tournament logo: shown on every screen of this auction ----------
+    function logoSecHTML() {
+      return sec("gold", "🏆", "Tournament logo",
+        "Shown everywhere in this auction: phones, the auction room, the display screen, results and squad cards.",
+        `<div class="logo-row">
+           <div class="logo-preview">${A.logoV ? `<span class="tour-logo big" data-tour-logo hidden></span>` : `<span class="logo-none">No logo yet</span>`}</div>
+           <div class="row">
+             <label class="btn btn-sun">${A.logoV ? "Change logo" : "Upload logo"}<input type="file" id="logoIn" accept="image/*" hidden></label>
+             ${A.logoV ? `<button class="btn btn-light" id="logoDel">Remove</button>` : ""}
+           </div>
+         </div>
+         <p class="hint">PNG with a transparent background looks best. Square or wide logos both work.</p>`);
+    }
+    async function uploadLogo(file) {
+      $("saveNote").textContent = "Uploading…";
+      try {
+        const src = await compressLogo(file), v = Date.now();
+        await set(ref(db, `auctionPhotos/${code}/logo`), src);
+        await update(ref(db), { [`auctions/${code}/logoV`]: v, [`auctionsByOwner/${user.uid}/${code}/logoV`]: v });
+        A.logoV = v;
+        await refreshTourLogo(code, A);
+        $("saveNote").textContent = "Saved";
+        if (tab === "basics") renderBasics();
+      } catch (e) { $("saveNote").textContent = ""; alertBox("Logo not used", e.message || "That picture couldn't be read. Try a PNG or JPG.", "🏆"); }
+    }
+    async function removeLogo() {
+      if (!await confirmBox("Remove the tournament logo?", "It disappears from every screen of this auction.", { ok: "Remove", danger: true })) return;
+      await update(ref(db), { [`auctions/${code}/logoV`]: null, [`auctionPhotos/${code}/logo`]: null, [`auctionsByOwner/${user.uid}/${code}/logoV`]: null });
+      delete A.logoV;
+      await refreshTourLogo(code, A);
+      renderBasics();
+    }
+
     function bannerSecHTML() {
       const ids = bannerIds();
       return sec("rose", "🖼️", "Auction landing photos",
@@ -626,6 +670,7 @@
     $("pane-basics").addEventListener("click", e => {
       const g = e.target.closest("[data-goto]"); if (g) showTab(g.dataset.goto);
       const bd = e.target.closest("[data-bdel]"); if (bd) removeBanner(bd.dataset.bdel);
+      if (e.target.closest("#logoDel")) removeLogo();
     });
     $("pane-basics").addEventListener("input", e => {
       const t = e.target, s = A.settings;
@@ -639,6 +684,7 @@
     $("pane-basics").addEventListener("change", e => {
       const t = e.target, s = A.settings;
       if (t.id === "bannerIn") { const f = [...t.files]; t.value = ""; if (f.length) addBanners(f); return; }
+      if (t.id === "logoIn") { const f = t.files[0]; t.value = ""; if (f) uploadLogo(f); return; }
       if (t.id === "sCurrency") {
         const c = CURRENCIES[t.value];
         Object.assign(s, { currency: t.value, unit: c.unit, unitAfter: c.after });

@@ -1104,3 +1104,21 @@ body.display-mode #nextUp { display: none !important; }
 .sq-col dd b { color: #FFD23F; }
 .sq-show.summary .sq-strip { display: none; }
 @media (prefers-reduced-motion: reduce) { .sq-col { animation: none; } }
+
+/* ---------- tournament logo ---------- */
+.tour-logo { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.tour-logo[hidden] { display: none !important; }
+.tour-logo img { display: block; height: 100%; width: auto; max-width: 100%; object-fit: contain; }
+.tour-logo.top { height: 44px; max-width: 120px; }
+.tour-logo.ed { height: 48px; max-width: 120px; margin-right: 4px; }
+.tour-logo.showcase-logo { display: flex; height: clamp(90px, 14vh, 150px); max-width: min(320px, 80%); margin: 0 auto 10px; filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.18)); }
+.tour-logo.big { height: 120px; max-width: 260px; }
+.tour-logo.sq { height: 64px; max-width: 160px; }
+.sq-top { display: flex; align-items: center; gap: 18px; }
+.sq-top .sq-head { flex: 1; }
+.logo-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.logo-preview { min-width: 160px; min-height: 120px; display: grid; place-items: center; padding: 10px; border-radius: 16px; background: repeating-conic-gradient(#f1f3f2 0 25%, #fff 0 50%) 0 0 / 18px 18px; border: 1px solid var(--line); }
+.logo-none { color: var(--dim); font-weight: 700; }
+.list-ico.has-logo { padding: 4px; background: #fff; }
+.list-ico.has-logo img { width: 100%; height: 100%; object-fit: contain; }
+@media (max-width: 560px) { .tour-logo.top { height: 36px; max-width: 90px; } }

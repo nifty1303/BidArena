@@ -608,7 +608,25 @@ function tone(freq, start, length, type = "sine", volume = 0.25, slideTo = null)
   o.stop(now + start + length + 0.05);
 }
 export const sounds = {
-  bid()    { try { tone(880, 0, 0.09, "triangle", 0.18); tone(1320, 0.07, 0.12, "triangle", 0.14); } catch (e) {} },
+  // every bid: a bright "cha-ching" with a little punch underneath
+  bid()    {
+    try {
+      tone(150, 0, 0.12, "sine", 0.35, 70);                // thump
+      tone(1318.5, 0, 0.07, "square", 0.07);               // cha-
+      tone(1975.5, 0.06, 0.22, "triangle", 0.2);            // -ching
+      tone(2637, 0.06, 0.18, "sine", 0.08);                 // sparkle
+    } catch (e) {}
+  },
+  // a new player steps up: whoosh, then a game-show "da-da-DAAA"
+  arrive() {
+    try {
+      tone(180, 0, 0.32, "sawtooth", 0.05, 1200);           // whoosh up
+      tone(392, 0.3, 0.1, "square", 0.08); tone(523.25, 0.3, 0.1, "triangle", 0.14);
+      tone(392, 0.43, 0.1, "square", 0.08); tone(523.25, 0.43, 0.1, "triangle", 0.14);
+      [523.25, 659.25, 783.99, 1046.5].forEach(f => tone(f, 0.58, 0.7, "triangle", 0.13));
+      tone(130.8, 0.58, 0.5, "sine", 0.3, 65);              // boom under the chord
+    } catch (e) {}
+  },
   tick()   { try { tone(1500, 0, 0.05, "square", 0.05); } catch (e) {} },
   outbid() { try { tone(330, 0, 0.18, "sawtooth", 0.1, 220); } catch (e) {} },
   sold()   {
@@ -621,6 +639,21 @@ export const sounds = {
   going()  { try { tone(660, 0, 0.14, "square", 0.08); tone(660, 0.18, 0.14, "square", 0.08); } catch (e) {} },
   intro()  { try { [392, 523.25, 659.25].forEach((f, i) => tone(f, i * 0.09, 0.35, "sawtooth", 0.07)); } catch (e) {} }
 };
+
+// Arrival and bid sounds, the same on every screen. Call it on every tick with the live lot.
+// A player arriving with a new-category announcement gets the fanfare when the announcement ends.
+let lsKey = null, lsPending = null, lsSeq = 0;
+export function lotSounds(live, skipBidSeq = -1) {
+  if (!live || !live.pid) { lsKey = null; lsPending = null; return; }
+  const k = live.pid + ":" + (live.round || 1);
+  if (k !== lsKey) {
+    const firstLook = lsKey === null && (live.seq || 0) > 0;   // page opened mid-lot: stay quiet
+    lsKey = k; lsSeq = live.seq || 0;
+    lsPending = !firstLook && (live.state === "bidding" || live.state === "paused") ? k : null;
+  }
+  if (lsPending === k && !introOn(live)) { lsPending = null; sounds.arrive(); }
+  if ((live.seq || 0) > lsSeq) { lsSeq = live.seq; if (live.seq !== skipBidSeq) sounds.bid(); }
+}
 
 // ---------- confetti in a team's colour ----------
 export function confetti(host, colour) {

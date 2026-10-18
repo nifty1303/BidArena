@@ -1170,3 +1170,8 @@ body.display-mode #nextUp { display: none !important; }
   .sq-list li { padding: 8px 10px; }
   .sq-strip { justify-content: flex-start; }
 }
+
+/* sound switch for the control room and display (browsers need one click first) */
+.sound-float { position: fixed; right: 18px; bottom: 18px; z-index: 120; padding: 10px 16px; border: 0; border-radius: 999px; font: 700 14px/1 var(--body, inherit); color: #fff; background: var(--accent); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); cursor: pointer; animation: pulseSnd 1.6s ease-in-out infinite; }
+.sound-float[hidden] { display: none; }
+@keyframes pulseSnd { 50% { transform: scale(1.06); } }

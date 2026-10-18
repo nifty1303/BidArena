@@ -82,12 +82,12 @@
   <script type="module">
     import {
       db, ref, get, set, update, push, onValue, serverTimestamp, serverNow, currentUser, isHostAccount, signInHost,
-      safe, animate, initials, money, nextBid, stepFor, allMaxBids, sounds, unlockAudio, confetti, toCSV, downloadCSV, brandHTML, endsAt,
+      safe, animate, initials, money, nextBid, stepFor, allMaxBids, sounds, unlockAudio, audioReady, confetti, toCSV, downloadCSV, brandHTML, endsAt,
       catList, catMax, squadLimits, squadText, setupProblems, UNSOLD_RULES,
       catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine,
       dialog, alertBox, confirmBox, copyText, teamBudget, purseLeftOf,
       playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
-      mountBidders, watchConnection, ensureGuest, showBreak, squadCardBlob, squadCSV, shareOrDownload, teamSquad, refreshTourLogo, renderSquadShow, catIntroHTML, introOn
+      mountBidders, watchConnection, ensureGuest, showBreak, squadCardBlob, squadCSV, shareOrDownload, teamSquad, refreshTourLogo, renderSquadShow, catIntroHTML, introOn, lotSounds
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction room");
@@ -562,7 +562,7 @@
       const amt = $("bidAmount");
       amt.textContent = money(live.amount, s);
       if (live.seq !== lastSeq) {
-        if (lastSeq !== -1 && live.seq > lastSeq) { amt.classList.remove("bump"); void amt.offsetWidth; amt.classList.add("bump"); sounds.bid(); }
+        if (lastSeq !== -1 && live.seq > lastSeq) { amt.classList.remove("bump"); void amt.offsetWidth; amt.classList.add("bump"); }
         lastSeq = live.seq;
       }
       $("leader").innerHTML = leader
@@ -603,6 +603,8 @@
     // ---------- countdown ----------
     function tick() {
       const live = L();
+      lotSounds(live);
+      $("soundFloat") && ($("soundFloat").hidden = audioReady());
       const ring = $("ring");
       if (!ring || !live.timerMs) return;
       let left = live.state === "paused" ? (live.pausedLeft || 0) : Math.max(0, endsAt(live) - serverNow());
@@ -632,6 +634,10 @@
       }
     }
     setInterval(() => { if (A && A.status === "live") tick(); }, 200);
+    // Browsers keep sound off until the page is clicked once: any click or key turns it on
+    document.body.insertAdjacentHTML("beforeend", `<button type="button" id="soundFloat" class="sound-float">🔊 Click to turn on sound</button>`);
+    $("soundFloat").onclick = () => { unlockAudio(); setTimeout(() => { sounds.bid(); $("soundFloat").hidden = audioReady(); }, 60); };
+    ["pointerdown", "keydown"].forEach(ev => document.addEventListener(ev, () => { unlockAudio(); setTimeout(() => { $("soundFloat").hidden = audioReady(); }, 120); }));
 
     // "Going once… going twice…" banner over the stage
     function showGoing(which) {

@@ -51,6 +51,7 @@
           <button id="undoBtn" class="btn btn-dark">Undo last sale</button>
           <button id="undoUnsoldBtn" class="btn btn-dark" title="Put the player who just went unsold back in the queue">↩ Undo unsold</button>
           <button id="breakBtn" class="btn btn-dark" title="Show a break countdown on every screen">☕ Break</button>
+          <button id="squadsBtn" class="btn btn-dark" title="Show every team's squad so far on the display">📋 Squads</button>
           <button id="endBtn" class="btn btn-danger">End auction</button>
         </div>
         <div id="quickbid" class="quickbid">
@@ -85,7 +86,7 @@
       catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine,
       dialog, alertBox, confirmBox, copyText, teamBudget, purseLeftOf,
       playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
-      mountBidders, watchConnection, ensureGuest, showBreak, squadCardBlob, squadCSV, shareOrDownload
+      mountBidders, watchConnection, ensureGuest, showBreak, squadCardBlob, squadCSV, shareOrDownload, teamSquad
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction room");
@@ -705,6 +706,8 @@
       $("undoBtn").disabled = !Object.keys(A.sales || {}).length || onLot;
       $("undoUnsoldBtn").disabled = !(live.state === "unsold" && live.pid && (A.players[live.pid] || {}).status === "unsold");
       $("breakBtn").disabled = onLot || live.state === "closing";
+      $("squadsBtn").disabled = onLot || live.state === "closing";
+      $("squadsBtn").textContent = A.showSquads ? "📋 Hide squads" : "📋 Squads";
       $("breakBtn").textContent = A.breakUntil ? "☕ End break" : "☕ Break";
       const next = live.state === "bidding" ? nextBid(live, s) : 0;
       $("qbRow").innerHTML = teams().map(([id, t]) => {
@@ -753,6 +756,7 @@
       const timerMs = (s.timerSec || 20) * 1000;
       await update(ref(db), {
         [`auctions/${code}/breakUntil`]: null, [`auctions/${code}/breakMsg`]: null,
+        [`auctions/${code}/showSquads`]: null, [`auctions/${code}/squadFocus`]: null,
         [`auctions/${code}/bids/${pid}`]: null,
         [`auctions/${code}/live`]: {
           pid, cat: p.cat, round: (p.rounds || 0) + 1, state: "bidding", base: cat.base, amount: cat.base, team: "", seq: 0,
@@ -1018,7 +1022,87 @@
     $("undoBtn").onclick = undoLastSale;
     $("undoUnsoldBtn").onclick = () => undoUnsold();
     $("breakBtn").onclick = toggleBreak;
-    setInterval(() => { if (A) showBreak(A, DISPLAY ? {} : { compact: true, onEnd: () => update(aRef(), { breakUntil: null, breakMsg: null }) }); }, 500);
+    // Break countdown: a slim banner in the control room. The display shows it inside the squads showcase.
+    setInterval(() => { if (A && !DISPLAY) showBreak(A, { compact: true, onEnd: () => update(aRef(), { breakUntil: null, breakMsg: null, squadFocus: null }) }); }, 500);
+
+    // ============================================================
+    // "Squads so far" showcase on the display: during a break, or whenever the host shows it.
+    // One team at a time with every player and price; rotates through the teams unless the host pins one.
+    // ============================================================
+    $("squadsBtn").onclick = () => update(aRef(), A.showSquads ? { showSquads: null, squadFocus: null } : { showSquads: true });
+    let showIdx = 0, showNext = 0, showKey = "";
+    function renderShowcase() {
+      const on = A && A.status === "live" && (A.breakUntil || A.showSquads);
+      let el = $("squadShow");
+      if (!on) { el?.remove(); showKey = ""; return; }
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "squadShow";
+        el.className = "sq-show";
+        el.innerHTML = `<div class="sq-head"></div><div class="sq-stage"></div><div class="sq-strip"></div>`;
+        document.body.appendChild(el);
+        showNext = 0;
+      }
+      const s = S(), ids = teams().map(([id]) => id);
+      if (!ids.length) return;
+      // header: the break countdown, or the title
+      if (A.breakUntil) {
+        const left = Math.max(0, A.breakUntil - serverNow());
+        el.querySelector(".sq-head").innerHTML = `<span>☕ ${safe(A.breakMsg || "Short break")}</span><b>${left > 0 ? `Back in ${Math.floor(left / 60000)}:${String(Math.floor(left / 1000) % 60).padStart(2, "0")}` : "Back any moment"}</b><span>Squads so far</span>`;
+      } else el.querySelector(".sq-head").innerHTML = `<span>${safe(A.title || "Auction")}</span><b>Squads so far</b><span>${Object.values(A.players || {}).filter(p => p.status === "sold").length} players sold</span>`;
+      // which team
+      const focus = A.squadFocus && A.teams[A.squadFocus] ? A.squadFocus : null;
+      if (!focus && Date.now() >= showNext) {
+        if (showNext) showIdx = (showIdx + 1) % ids.length;
+        const n = teamSquad(A, ids[showIdx % ids.length]).length;
+        showNext = Date.now() + Math.min(14000, 7000 + n * 350);           // longer for bigger squads
+      }
+      const id = focus || ids[showIdx % ids.length], t = A.teams[id];
+      const squad = teamSquad(A, id), cats = catList(s);
+      const top = squad.reduce((m, p) => (!m || (p.price || 0) > (m.price || 0) ? p : m), null);
+      const key = JSON.stringify([id, t.purseLeft, t.spent, squad.map(p => [p.name, p.price])]);
+      if (key !== showKey) {
+        showKey = key;
+        el.querySelector(".sq-stage").innerHTML = `
+          <div class="sq-card" style="--c:${safe(t.color)}">
+            <div class="sq-team">${crest(id, "xl")}
+              <div><h2>${safe(t.name)}</h2>
+                <p>${squad.length} player${squad.length === 1 ? "" : "s"} · spent <b>${money(t.spent || 0, s)}</b> · <b>${money(purseLeftOf(t, s), s)}</b> left</p></div></div>
+            ${squad.length ? `<ol class="sq-list ${squad.length > 8 ? "two" : ""}">${squad.map((p, k) => `
+              <li style="animation-delay:${0.15 + k * 0.05}s" class="${p === top && squad.length > 1 ? "top" : ""}">
+                <span><b>${safe(p.name)}</b><small>${safe([positionOf(p, s), (cats.find(c => c.id === p.cat) || {}).name].filter(Boolean).join(" · "))}</small></span>
+                <em>${p === top && squad.length > 1 ? "⭐ " : ""}${money(p.price, s)}</em></li>`).join("")}</ol>`
+              : `<p class="sq-empty">No players bought yet</p>`}
+          </div>`;
+      }
+      el.querySelector(".sq-strip").innerHTML = ids.map(tid => {
+        const tt = A.teams[tid];
+        return `<div class="sq-chip ${tid === id ? "on" : ""}" style="--c:${safe(tt.color)}">${crest(tid, "sm")}<span><b>${safe(tt.name)}</b><small>${(tt.count || 0)} · ${money(purseLeftOf(tt, s), s)} left</small></span></div>`;
+      }).join("");
+    }
+    if (DISPLAY) setInterval(renderShowcase, 500);
+
+    // Control room: a small panel to pin one team or rotate through all, while the showcase is up
+    function renderShowControls() {
+      const on = !DISPLAY && A && A.status === "live" && (A.breakUntil || A.showSquads);
+      let el = $("squadCtl");
+      if (!on) { el?.remove(); return; }
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "squadCtl";
+        el.className = "squad-ctl";
+        document.body.appendChild(el);
+        el.addEventListener("change", e => { if (e.target.id === "sqFocus") update(aRef(), { squadFocus: e.target.value || null }); });
+        el.addEventListener("click", e => { if (e.target.closest("#sqHide")) update(aRef(), { showSquads: null, squadFocus: null }); });
+      }
+      const key = JSON.stringify([A.squadFocus || "", !!A.showSquads, teams().map(([id, t]) => [id, t.name])]);
+      if (el.dataset.key === key) return;
+      el.dataset.key = key;
+      el.innerHTML = `<span>📋 <b>Squads on the display</b>${A.breakUntil && !A.showSquads ? " (during the break)" : ""}</span>
+        <select id="sqFocus" class="select"><option value="">Rotate through all teams</option>${teams().map(([id, t]) => `<option value="${id}" ${A.squadFocus === id ? "selected" : ""}>Show ${safe(t.name)}</option>`).join("")}</select>
+        ${A.showSquads ? `<button id="sqHide" class="btn btn-light btn-sm">Hide</button>` : ""}`;
+    }
+    setInterval(renderShowControls, 500);
     $("pool").addEventListener("click", e => {
       const b = e.target.closest("[data-call]"); if (b) startLot(b.dataset.call);
       const r = e.target.closest("[data-requeue]"); if (r) undoUnsold(r.dataset.requeue);

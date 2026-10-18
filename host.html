@@ -985,6 +985,11 @@
            <small>Choose many at once. Name each file after the player, e.g. <i>Arif Hossain.jpg</i>, and it's matched automatically.</small>
            <input type="file" id="photoFiles" accept="image/*" multiple hidden>
          </label>
+         <label class="drop" id="newPhotoZone" style="margin-top:10px">
+           <b>🆕 Make players from photos</b>
+           <small>Each photo becomes a new player named after its file (<i>Sajib Ahmed.jpg</i> → Sajib Ahmed), photo attached. Great for a folder downloaded from Google Drive. Fill in positions afterwards, or download the list and re-import it.</small>
+           <input type="file" id="newFromPhotos" accept="image/*" multiple hidden>
+         </label>
          <p class="hint">Columns, in this order (the header row is optional):</p>
          <div class="cols-note">${columns().map(c => `<span class="${c.req ? "req" : ""}">${safe(c.label)}${c.req ? " *" : ""}</span>`).join("")}</div>
          <div class="row" style="margin-top:12px">
@@ -1062,6 +1067,11 @@
       pz.addEventListener("dragover", e => { e.preventDefault(); pz.classList.add("over"); });
       pz.addEventListener("dragleave", () => pz.classList.remove("over"));
       pz.addEventListener("drop", e => { e.preventDefault(); pz.classList.remove("over"); const f = [...e.dataTransfer.files].filter(x => x.type.startsWith("image/")); if (f.length) importPhotos(f); });
+      $("newFromPhotos").onchange = e => { const f = [...e.target.files]; e.target.value = ""; if (f.length) playersFromPhotos(f); };
+      const nz = $("newPhotoZone");
+      nz.addEventListener("dragover", e => { e.preventDefault(); nz.classList.add("over"); });
+      nz.addEventListener("dragleave", () => nz.classList.remove("over"));
+      nz.addEventListener("drop", e => { e.preventDefault(); nz.classList.remove("over"); const f = [...e.dataTransfer.files].filter(x => x.type.startsWith("image/")); if (f.length) playersFromPhotos(f); });
       $("aPhoto").onchange = e => { const f = e.target.files[0]; $("aPhotoLbl").textContent = f ? `✓ ${f.name.slice(0, 18)}` : "📷 Choose photo"; };
       $("bulkAdd").onclick = () => importRows(parseTable($("bulkText").value || ""), "Pasted rows");
       // add one
@@ -1108,6 +1118,48 @@
       }
       renderPlayers(); updateTop();
       $("aName").focus();
+    }
+
+    // "Sajib_ahmed (1).JPG" → "Sajib Ahmed"
+    function nameFromFile(fname) {
+      let n = String(fname).replace(/\.[^.]+$/, "").replace(/\(\d+\)$/, "").replace(/[_\-.]+/g, " ").replace(/\s+/g, " ").trim();
+      if (n === n.toLowerCase() || n === n.toUpperCase()) n = n.toLowerCase().replace(/(^|\s)\S/g, c => c.toUpperCase());
+      return n.slice(0, 60);
+    }
+    // Each photo becomes a player (or adds its photo to a player with that name already)
+    async function playersFromPhotos(files) {
+      files = files.filter(f => f.type.startsWith("image/")).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      if (!files.length) return;
+      const byName = new Map(Object.entries(A.players).map(([id, p]) => [norm(p.name), id]));
+      const batch = newId(), cat = (catList(A.settings)[0] || {}).id;
+      let order = nextOrder(), made = 0, matched = 0;
+      const failed = [];
+      for (const [i, f] of files.entries()) {
+        $("saveNote").textContent = `Adding ${i + 1} of ${files.length}…`;
+        const name = nameFromFile(f.name);
+        if (!name) { failed.push(f.name); continue; }
+        try {
+          let id = byName.get(norm(name));
+          if (!id) {
+            id = newId();
+            const p = tidy({ name, cat, order: order++, status: "pending", batch });
+            A.players[id] = p;
+            await set(ref(db, `auctions/${code}/players/${id}`), p);
+            byName.set(norm(name), id);
+            made++;
+          } else matched++;
+          await savePlayerPhoto(id, f);
+        } catch (e) { failed.push(f.name); }
+      }
+      if (made) {
+        const rec = { name: `Photos (${files.length} file${files.length === 1 ? "" : "s"})`, count: made, at: serverTimestamp() };
+        await set(ref(db, `auctions/${code}/imports/${batch}`), rec);
+        A.imports = { ...(A.imports || {}), [batch]: { ...rec, at: Date.now() } };
+      }
+      $("saveNote").textContent = "Saved";
+      renderPlayers(); updateTop();
+      toast(`${made} new player${made === 1 ? "" : "s"}${matched ? `, ${matched} photo${matched === 1 ? "" : "s"} added to existing players` : ""}`);
+      if (failed.length) alertBox("Some photos weren't used", `These couldn't be read: ${failed.join(", ")}`, "📷");
     }
 
     async function savePlayerPhoto(pid, file) {
@@ -1231,16 +1283,20 @@
         const cats = catList(s);
         return (cats.find(c => norm(c.name) === n) || cats.find(c => norm(c.name).startsWith(n) || n.startsWith(norm(c.name).replace(/s$/, ""))) || {}).id || null;
       };
-      const existing = new Set(Object.values(A.players).map(p => norm(p.name)));
+      // a name already in the list is updated with the sheet's details (e.g. players made from photos, then filled in)
+      const existing = new Map(Object.entries(A.players).map(([id, p]) => [norm(p.name), id]));
+      const seen = new Set();
       const changes = {};
-      let order = nextOrder(), added = 0, newCats = 0, dupes = 0;
+      let order = nextOrder(), added = 0, newCats = 0, dupes = 0, updated = 0;
       const skipped = [];
       for (const r of rows) {
         const name = cell(r, "name");
         if (!name) continue;
-        if (existing.has(norm(name))) { dupes++; continue; }
-        existing.add(norm(name));
-        const p = { name: name.slice(0, 60), age: cleanAge(cell(r, "age")), order: order++, status: "pending" };
+        if (seen.has(norm(name))) { dupes++; continue; }
+        seen.add(norm(name));
+        const exId = existing.get(norm(name));
+        if (exId && A.players[exId].status === "sold") { dupes++; continue; }
+        const p = { name: name.slice(0, 60), age: cleanAge(cell(r, "age")), order: exId ? A.players[exId].order : order++, status: "pending" };
         let info = cell(r, "info");
         if (S) {
           p.role = matchRole(sport, cell(r, "role"));
@@ -1263,6 +1319,17 @@
         }
         if (!cat && p.role && s.cats[p.role]) cat = p.role;
         if (!cat && p.role) cat = findCat(S.roles[p.role].name);
+        if (exId) {
+          // keep the existing player (photo, order, file group); fill in whatever the sheet has
+          const cur = A.players[exId], set1 = {};
+          ["age", "role", "sub", "batHand", "bowlHand", "foot", "info", "attrs", "fav"].forEach(k => { if (p[k] !== undefined && p[k] !== "") set1[k] = p[k]; });
+          if (cat) set1.cat = cat;
+          if (Object.keys(set1).length) {
+            Object.entries(set1).forEach(([k, v]) => { cur[k] = v; changes[`auctions/${code}/players/${exId}/${k}`] = v; });
+            updated++;
+          } else dupes++;
+          continue;
+        }
         p.cat = cat || (catList(s)[0] || {}).id;
         p.batch = batch;
         const id = newId(), clean = tidy(p);
@@ -1274,12 +1341,13 @@
       if (added) {
         const rec = { name: String(source).slice(0, 80), count: added, at: serverTimestamp() };
         changes[`auctions/${code}/imports/${batch}`] = rec;
-        await update(ref(db), changes);
         A.imports = { ...(A.imports || {}), [batch]: { ...rec, at: Date.now() } };
       }
+      if (Object.keys(changes).length) await update(ref(db), changes);
       renderPlayers(); updateTop();
       const bits = [`Added ${added} player${added === 1 ? "" : "s"}`];
-      if (dupes) bits.push(`skipped ${dupes} already in the list`);
+      if (updated) bits.push(`updated ${updated} already in the list`);
+      if (dupes) bits.push(`skipped ${dupes} (already in the list${updated ? " with nothing new" : ""}, or sold)`);
       if (newCats) bits.push(`made ${newCats} new categor${newCats === 1 ? "y" : "ies"} (set their prices in Categories)`);
       toast(bits.join(", "));
       if (skipped.length) dialog({ title: "Some players were skipped", icon: "⚠️", dismiss: true,

@@ -756,7 +756,7 @@
       const timerMs = (s.timerSec || 20) * 1000;
       await update(ref(db), {
         [`auctions/${code}/breakUntil`]: null, [`auctions/${code}/breakMsg`]: null,
-        [`auctions/${code}/showSquads`]: null, [`auctions/${code}/squadFocus`]: null,
+        [`auctions/${code}/showSquads`]: null, [`auctions/${code}/squadFocus`]: null, [`auctions/${code}/squadMode`]: null,
         [`auctions/${code}/bids/${pid}`]: null,
         [`auctions/${code}/live`]: {
           pid, cat: p.cat, round: (p.rounds || 0) + 1, state: "bidding", base: cat.base, amount: cat.base, team: "", seq: 0,
@@ -1023,14 +1023,38 @@
     $("undoUnsoldBtn").onclick = () => undoUnsold();
     $("breakBtn").onclick = toggleBreak;
     // Break countdown: a slim banner in the control room. The display shows it inside the squads showcase.
-    setInterval(() => { if (A && !DISPLAY) showBreak(A, { compact: true, onEnd: () => update(aRef(), { breakUntil: null, breakMsg: null, squadFocus: null }) }); }, 500);
+    setInterval(() => { if (A && !DISPLAY) showBreak(A, { compact: true, onEnd: () => update(aRef(), { breakUntil: null, breakMsg: null, squadFocus: null, squadMode: null }) }); }, 500);
 
     // ============================================================
     // "Squads so far" showcase on the display: during a break, or whenever the host shows it.
     // One team at a time with every player and price; rotates through the teams unless the host pins one.
     // ============================================================
-    $("squadsBtn").onclick = () => update(aRef(), A.showSquads ? { showSquads: null, squadFocus: null } : { showSquads: true });
-    let showIdx = 0, showNext = 0, showKey = "";
+    $("squadsBtn").onclick = () => update(aRef(), A.showSquads ? { showSquads: null, squadFocus: null, squadMode: null } : { showSquads: true, squadFocus: null, squadMode: null });
+    let showIdx = 0, showNext = 0, showKey = "", showMode = "";
+
+    // All teams side by side: what each has bought, spent, has left, can still bid, and still needs
+    function summaryHTML() {
+      const s = S(), cats = catList(s), lim = squadLimits(s), list = teams();
+      return `<div class="sq-sum" style="--n:${Math.min(list.length, 5)}">${list.map(([id, t], k) => {
+        const squad = teamSquad(A, id), spent = t.spent || 0, left = purseLeftOf(t, s), budget = teamBudget(t, s);
+        const top = squad.reduce((m, p) => (!m || (p.price || 0) > (m.price || 0) ? p : m), null);
+        const avg = squad.length ? Math.round(spent / squad.length) : 0;
+        const power = Math.max(0, ...cats.map(c => (t.maxBid && t.maxBid[c.id]) || 0));
+        const needs = cats.map(c => [c, Math.max(0, c.min - ((t.cat && t.cat[c.id]) || 0))]).filter(([, n]) => n > 0);
+        return `<div class="sq-col" style="--c:${safe(t.color)};animation-delay:${k * 0.12}s">
+          <div class="sq-col-head">${crest(id, "lg")}<h3>${safe(t.name)}</h3></div>
+          <div class="sq-big"><b>${squad.length}</b><span>bought<br>of ${safe(squadText(s))}</span></div>
+          <div class="sq-money"><div><small>Spent</small><b>${money(spent, s)}</b></div><div><small>Left</small><b>${money(left, s)}</b></div></div>
+          <div class="sq-bar"><i style="width:${Math.max(0, Math.min(100, (left / (budget || 1)) * 100))}%"></i></div>
+          <dl>
+            <div><dt>Top buy</dt><dd>${top ? `${safe(top.name)} · <b>${money(top.price, s)}</b>` : "–"}</dd></div>
+            <div><dt>Average price</dt><dd>${avg ? money(avg, s) : "–"}</dd></div>
+            <div><dt>Can still bid up to</dt><dd><b>${power ? money(power, s) : "–"}</b></dd></div>
+            <div><dt>Still needs</dt><dd>${needs.length ? needs.map(([c, n]) => `${n} ${safe(c.name)}`).join(", ") : "✓ Minimums met"}${(t.count || 0) >= lim.max ? " · squad full" : ""}</dd></div>
+          </dl>
+        </div>`;
+      }).join("")}</div>`;
+    }
     function renderShowcase() {
       const on = A && A.status === "live" && (A.breakUntil || A.showSquads);
       let el = $("squadShow");
@@ -1049,7 +1073,20 @@
       if (A.breakUntil) {
         const left = Math.max(0, A.breakUntil - serverNow());
         el.querySelector(".sq-head").innerHTML = `<span>☕ ${safe(A.breakMsg || "Short break")}</span><b>${left > 0 ? `Back in ${Math.floor(left / 60000)}:${String(Math.floor(left / 1000) % 60).padStart(2, "0")}` : "Back any moment"}</b><span>Squads so far</span>`;
-      } else el.querySelector(".sq-head").innerHTML = `<span>${safe(A.title || "Auction")}</span><b>Squads so far</b><span>${Object.values(A.players || {}).filter(p => p.status === "sold").length} players sold</span>`;
+      } else {
+        const all = Object.values(A.players || {}), sold = all.filter(p => p.status === "sold");
+        el.querySelector(".sq-head").innerHTML = `<span>${safe(A.title || "Auction")}</span><b>Squads so far</b><span>${sold.length} sold · ${money(sold.reduce((n, p) => n + (p.price || 0), 0), s)} spent · ${all.filter(p => (p.status || "pending") === "pending").length} to come</span>`;
+      }
+      // summary of all teams first; "Play" goes team by team; or one team pinned
+      const mode = A.squadFocus && A.teams[A.squadFocus] ? "team" : A.squadMode === "play" ? "play" : "summary";
+      if (mode !== showMode) { showMode = mode; showKey = ""; showIdx = 0; showNext = 0; }
+      el.classList.toggle("summary", mode === "summary");
+      if (mode === "summary") {
+        const key = "sum" + JSON.stringify(teams().map(([id, t]) => [id, t.spent, t.purseLeft, t.count, t.maxBid]));
+        if (key !== showKey) { showKey = key; el.querySelector(".sq-stage").innerHTML = summaryHTML(); }
+        el.querySelector(".sq-strip").innerHTML = "";
+        return;
+      }
       // which team
       const focus = A.squadFocus && A.teams[A.squadFocus] ? A.squadFocus : null;
       if (!focus && Date.now() >= showNext) {
@@ -1092,14 +1129,21 @@
         el.id = "squadCtl";
         el.className = "squad-ctl";
         document.body.appendChild(el);
-        el.addEventListener("change", e => { if (e.target.id === "sqFocus") update(aRef(), { squadFocus: e.target.value || null }); });
-        el.addEventListener("click", e => { if (e.target.closest("#sqHide")) update(aRef(), { showSquads: null, squadFocus: null }); });
+        el.addEventListener("change", e => { if (e.target.id === "sqFocus") update(aRef(), { squadFocus: e.target.value || null, squadMode: e.target.value ? "play" : A.squadMode || null }); });
+        el.addEventListener("click", e => {
+          if (e.target.closest("#sqHide")) update(aRef(), { showSquads: null, squadFocus: null, squadMode: null });
+          if (e.target.closest("#sqPlay")) update(aRef(), { squadMode: "play", squadFocus: null });
+          if (e.target.closest("#sqSum")) update(aRef(), { squadMode: null, squadFocus: null });
+        });
       }
-      const key = JSON.stringify([A.squadFocus || "", !!A.showSquads, teams().map(([id, t]) => [id, t.name])]);
+      const playing = A.squadMode === "play" || !!A.squadFocus;
+      const key = JSON.stringify([A.squadFocus || "", A.squadMode || "", !!A.showSquads, teams().map(([id, t]) => [id, t.name])]);
       if (el.dataset.key === key) return;
       el.dataset.key = key;
       el.innerHTML = `<span>📋 <b>Squads on the display</b>${A.breakUntil && !A.showSquads ? " (during the break)" : ""}</span>
-        <select id="sqFocus" class="select"><option value="">Rotate through all teams</option>${teams().map(([id, t]) => `<option value="${id}" ${A.squadFocus === id ? "selected" : ""}>Show ${safe(t.name)}</option>`).join("")}</select>
+        <button id="sqSum" class="btn btn-sm ${playing ? "btn-light" : "btn-sun"}">📊 Summary</button>
+        <button id="sqPlay" class="btn btn-sm ${A.squadMode === "play" && !A.squadFocus ? "btn-sun" : "btn-light"}">▶ Play team by team</button>
+        <select id="sqFocus" class="select"><option value="">Pin one team…</option>${teams().map(([id, t]) => `<option value="${id}" ${A.squadFocus === id ? "selected" : ""}>${safe(t.name)}</option>`).join("")}</select>
         ${A.showSquads ? `<button id="sqHide" class="btn btn-light btn-sm">Hide</button>` : ""}`;
     }
     setInterval(renderShowControls, 500);

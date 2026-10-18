@@ -14,6 +14,7 @@
   <main class="wrap room">
     <div class="room-top">
       <span id="brandSlot"></span>
+      <span class="tour-logo top" data-tour-logo hidden></span>
       <h1 id="roomTitle" class="room-title"></h1>
       <span id="livePill" class="pill live" hidden>● Live</span>
       <span id="joinChip" class="join-chip" hidden></span>
@@ -75,7 +76,7 @@
 
     <section id="results" hidden></section>
   </main>
-  <div id="qrBig" class="qr-big" hidden><div class="qr-big-card"><p class="eyebrow">Watch live on your phone</p><div class="qr" id="qrBigCode"></div><p class="qr-big-url" id="qrBigUrl"></p><p class="muted">Press Q or click to close</p></div></div>
+  <div id="qrBig" class="qr-big" hidden><div class="qr-big-card"><span class="tour-logo showcase-logo" data-tour-logo hidden></span><p class="eyebrow">Watch live on your phone</p><div class="qr" id="qrBigCode"></div><p class="qr-big-url" id="qrBigUrl"></p><p class="muted">Press Q or click to close</p></div></div>
   <div id="connBar" class="conn-bar" hidden>⚠️ Connection lost. Reconnecting… The timer won't close a player until you're back.</div>
 
   <script type="module">
@@ -86,7 +87,7 @@
       catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine,
       dialog, alertBox, confirmBox, copyText, teamBudget, purseLeftOf,
       playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
-      mountBidders, watchConnection, ensureGuest, showBreak, squadCardBlob, squadCSV, shareOrDownload, teamSquad
+      mountBidders, watchConnection, ensureGuest, showBreak, squadCardBlob, squadCSV, shareOrDownload, teamSquad, refreshTourLogo
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction room");
@@ -135,6 +136,7 @@
           if (!A) { message(`<h2 class="title">Auction not found</h2>`); return; }
           render();
           refreshBanners();
+          refreshTourLogo(code, A);
           if (await loadTeamLogos(code, A.teams, logos)) { lastKey = ""; render(); }
         });
         return;
@@ -157,6 +159,7 @@
         if (A.members) set(aRef("members"), null);     // old public member list held team PINs; members now live in auctionMembers
         render();
         refreshBanners();
+        refreshTourLogo(code, A);
         if (await loadTeamLogos(code, A.teams, logos)) { lastKey = ""; render(); }   // a team picture changed
       });
     }
@@ -326,7 +329,8 @@
     function renderStartScreen() {
       const s = S(), cats = catList(s);
       if (DISPLAY) {
-        message(`<h2 class="title">${safe(A.title || "Auction")}</h2>
+        message(`<span class="tour-logo showcase-logo" data-tour-logo hidden></span>
+          <h2 class="title">${safe(A.title || "Auction")}</h2>
           <p class="lead">The auction starts soon</p>
           <div class="parade" style="margin:16px 0">${teams().map(([id, t]) => `<div class="pt">${crest(id, "xl")}${safe(t.name)}</div>`).join("")}</div>
           <div class="qr-start"><div class="qr" id="qrStart"></div><div><b>Scan to watch live</b><p class="muted" style="margin:4px 0 0">${safe(shortUrl())} · code <b>${code}</b></p></div></div>`);
@@ -335,6 +339,7 @@
       }
       const issues = problems();
       message(`
+        <span class="tour-logo showcase-logo" data-tour-logo hidden></span>
         <h2 class="title">Ready to <span>start?</span></h2>
         <div class="parade" style="justify-content:flex-start;margin:14px 0 4px">${teams().map(([id, t]) => `<div class="pt">${crest(id, "lg")}${safe(t.name)}</div>`).join("")}</div>
         <p class="lead" style="color:var(--muted)">${teams().length} teams · ${players().length} players · budget ${money(s.purse, s)} each${teams().some(([, t]) => +t.budget > 0 && +t.budget !== +s.purse) ? " (some teams differ)" : ""} · squads of ${squadText(s)} · ${s.timerSec}s timer</p>
@@ -476,6 +481,7 @@
           const left = pending().length;
           const html = DISPLAY ? bannerHTML(bannerSrcs, "stage-banner") + (first ? `
             <div class="idle">
+              <span class="tour-logo showcase-logo" data-tour-logo hidden></span>
               <p class="bid-label">Tonight's contenders</p>
               <h2 class="title">Welcome to <span>${safe(A.title || "the auction")}</span></h2>
               <div class="parade">${teams().map(([id, t], k) => `<div class="pt" style="animation-delay:${k * 0.08}s">${crest(id, "xl")}${safe(t.name)}</div>`).join("")}</div>
@@ -487,6 +493,7 @@
               <p class="lead">${sold} sold · ${left} still to come${unsold ? ` · ${unsold} unsold` : ""}</p>
             </div>`) : bannerHTML(bannerSrcs, "stage-banner") + (first && q ? `
             <div class="idle">
+              <span class="tour-logo showcase-logo" data-tour-logo hidden></span>
               <p class="bid-label">Tonight's contenders</p>
               <h2 class="title">Welcome to <span>${safe(A.title || "the auction")}</span></h2>
               <div class="parade">${teams().map(([id, t], k) => `<div class="pt" style="animation-delay:${k * 0.08}s">${crest(id, "xl")}${safe(t.name)}</div>`).join("")}</div>
@@ -1063,7 +1070,7 @@
         el = document.createElement("div");
         el.id = "squadShow";
         el.className = "sq-show";
-        el.innerHTML = `<div class="sq-head"></div><div class="sq-stage"></div><div class="sq-strip"></div>`;
+        el.innerHTML = `<div class="sq-top"><span class="tour-logo sq" data-tour-logo hidden></span><div class="sq-head"></div></div><div class="sq-stage"></div><div class="sq-strip"></div>`;
         document.body.appendChild(el);
         showNext = 0;
       }
@@ -1215,6 +1222,7 @@
       const unsold = players().filter(([, p]) => p.status !== "sold");
       r.innerHTML = `
         <div class="finale-hero">
+          <span class="tour-logo showcase-logo" data-tour-logo hidden></span>
           <p class="bid-label">The hammer has fallen</p>
           <h2 class="title">Squads <span>revealed</span></h2>
           <div class="row" style="justify-content:center;margin-top:14px">

@@ -840,11 +840,20 @@ export async function squadCardBlob(A, tid) {
   const bg = g.createLinearGradient(0, 0, W, H); bg.addColorStop(0, shade(col, 0.15)); bg.addColorStop(1, shade(col, -0.45));
   g.fillStyle = bg; g.fillRect(0, 0, W, H);
   const fit = (text, font, size, max) => { do { g.font = `${font.replace("{s}", size)}`; size -= 2; } while (g.measureText(text).width > max && size > 20); };
+  let logoW = 0;
+  if (tourLogo) {
+    try {
+      const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = tourLogo; });
+      const box = 170, k = Math.min(box / im.width, box / im.height);
+      logoW = Math.round(im.width * k) + 30;
+      g.drawImage(im, W - 60 - im.width * k, 60, im.width * k, im.height * k);
+    } catch (e) {}
+  }
   g.fillStyle = ink; g.globalAlpha = 0.85;
-  fit((A.title || "Auction").toUpperCase(), "700 {s}px Barlow, sans-serif", 32, W - 140);
+  fit((A.title || "Auction").toUpperCase(), "700 {s}px Barlow, sans-serif", 32, W - 140 - logoW);
   g.fillText((A.title || "Auction").toUpperCase(), 70, 105);
   g.globalAlpha = 1;
-  fit(String(t.name || "Team").toUpperCase(), "800 {s}px 'Barlow Condensed', sans-serif", 110, W - 140);
+  fit(String(t.name || "Team").toUpperCase(), "800 {s}px 'Barlow Condensed', sans-serif", 110, W - 140 - logoW);
   g.fillText(String(t.name || "Team").toUpperCase(), 70, 210);
   g.font = "700 34px Barlow, sans-serif";
   g.fillText(`${squad.length} player${squad.length === 1 ? "" : "s"} · spent ${money(t.spent || 0, s)} · ${money(purseLeftOf(t, s), s)} left`, 70, 262);
@@ -888,3 +897,51 @@ export async function shareOrDownload(blob, filename, text = "") {
   a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
+
+
+// ============================================================
+// Tournament logo: one per auction, shown everywhere a [data-tour-logo] spot appears
+// ============================================================
+// Logos keep transparency (PNG); falls back to a smaller size if the file is too big for one entry
+export async function compressLogo(file) {
+  const src = await new Promise((res, rej) => { const r = new FileReader(); r.onerror = rej; r.onload = () => res(r.result); r.readAsDataURL(file); });
+  const img = await new Promise((res, rej) => { const i = new Image(); i.onerror = rej; i.onload = () => res(i); i.src = src; });
+  for (const size of [512, 400, 320, 256, 200]) {
+    const k = Math.min(1, size / Math.max(img.width, img.height));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    for (const out of [c.toDataURL("image/png"), c.toDataURL("image/webp", 0.9)]) if (out.length <= 195000 && out.startsWith("data:image")) return out;
+  }
+  throw new Error("That logo is too detailed. Try a smaller image.");
+}
+let tourLogo = "", tourKey = "";
+export const currentTourLogo = () => tourLogo;
+function fillTourLogos(root) {
+  if (!root || !root.querySelectorAll) return;
+  const slots = root.matches && root.matches("[data-tour-logo]") ? [root] : [...root.querySelectorAll("[data-tour-logo]")];
+  slots.forEach(el => {
+    if (el.dataset.filled === tourLogo) return;
+    el.dataset.filled = tourLogo;
+    el.innerHTML = tourLogo ? `<img src="${tourLogo}" alt="Tournament logo">` : "";
+    el.hidden = !tourLogo;
+  });
+}
+export function setTourLogo(src) {
+  tourLogo = src || "";
+  document.body.classList.toggle("has-tour-logo", !!tourLogo);
+  fillTourLogos(document);
+}
+// spots added later (pages redraw often) are filled automatically
+new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if (n.nodeType === 1) fillTourLogos(n); })))
+  .observe(document.documentElement, { childList: true, subtree: true });
+// Call whenever the auction data changes; loads the picture only when its version changes
+export async function refreshTourLogo(code, A) {
+  const v = (A && A.logoV) || 0, key = `${code}/${v}`;
+  if (key === tourKey) return;
+  tourKey = key;
+  if (!code || !v) { setTourLogo(""); return; }
+  try { const snap = await get(ref(db, `auctionPhotos/${code}/logo`)); if (tourKey === key) setTourLogo(snap.exists() ? snap.val() : ""); }
+  catch (e) { setTourLogo(""); }
+}
+export const clearTourLogo = () => { tourKey = ""; setTourLogo(""); };

@@ -158,6 +158,7 @@
         if (A.owner !== user.uid && !(A.editors || {})[user.uid]) { message(`<h2 class="title">Not your auction</h2><p class="lead">Only its host and collaborators can run this room. To watch, open the viewer page with the code <b>${code}</b>.</p>`); return; }
         if (A.members) set(aRef("members"), null);     // old public member list held team PINs; members now live in auctionMembers
         render();
+        keepWatchStats();
         refreshBanners();
         refreshTourLogo(code, A);
         if (await loadTeamLogos(code, A.teams, logos)) { lastKey = ""; render(); }   // a team picture changed
@@ -195,18 +196,37 @@
     $("qrBig").onclick = () => toggleBigQR(false);
 
     // ---------- who's watching (viewers give a name) and which bidders are connected ----------
-    let viewers = {}, onlineBidders = {};
+    let viewers = {}, onlineBidders = {}, watchLog = {}, logReady = false;
     function watchAudience() {
       onValue(ref(db, `auctionViewers/${code}`), snap => { viewers = snap.val() || {}; drawAudience(); }, () => {});
+      onValue(ref(db, `auctionWatchLog/${code}`), snap => { watchLog = snap.val() || {}; logReady = true; drawAudience(); }, () => {});
       onValue(ref(db, `auctionOnline/${code}`), snap => { onlineBidders = snap.val() || {}; drawAudience(); }, () => {});
+    }
+    // Keeps the totals on the auction (so the display and the results can show them):
+    // everyone who ever watched, the most watching at once, and the team phones that joined
+    function keepWatchStats() {
+      if (DISPLAY || !A || !logReady) return;
+      const st = A.stats || {}, ch = {};
+      for (const [uid, v] of Object.entries(viewers))          // anyone watching before the log existed
+        if (!watchLog[uid] && v && v.name) { watchLog[uid] = { name: v.name, at: v.at || Date.now() }; ch[`auctionWatchLog/${code}/${uid}`] = watchLog[uid]; }
+      const now = Object.keys(viewers).length, total = Object.keys(watchLog).length, bidders = bidderInfo.approved || 0;
+      if (now > (st.peakViewers || 0)) { ch[`auctions/${code}/stats/peakViewers`] = now; ch[`auctions/${code}/stats/peakAt`] = serverTimestamp(); }
+      if (total > (st.totalViewers || 0)) ch[`auctions/${code}/stats/totalViewers`] = total;
+      if (bidders > (st.bidders || 0)) ch[`auctions/${code}/stats/bidders`] = bidders;
+      if (Object.keys(ch).length) update(ref(db), ch).catch(() => {});
     }
     function drawAudience() {
       $("watchCount").textContent = Object.keys(viewers).length;
+      keepWatchStats();
       const box = $("audienceBox");
       if (!box) return;
       const names = Object.values(viewers).map(v => v.name).sort((a, b) => a.localeCompare(b));
+      const st = (A && A.stats) || {}, total = Math.max(Object.keys(watchLog).length, st.totalViewers || 0);
+      const past = Object.entries(watchLog).filter(([uid]) => !viewers[uid]).map(([, v]) => v.name).sort((a, b) => a.localeCompare(b));
       box.innerHTML = `<p><b>${names.length}</b> watching · <b>${Object.keys(onlineBidders).length}</b> bidder phone${Object.keys(onlineBidders).length === 1 ? "" : "s"} connected</p>
-        <div class="audience">${names.map(n => `<span class="tag">👀 ${safe(n)}</span>`).join("") || `<p class="muted">No one is watching yet. Show the QR code so people can scan it.</p>`}</div>`;
+        <p class="muted" style="margin-top:-4px">So far: <b>${total}</b> ${total === 1 ? "person has" : "people have"} watched · peak <b>${st.peakViewers || names.length}</b> at once</p>
+        <div class="audience">${names.map(n => `<span class="tag">👀 ${safe(n)}</span>`).join("") || `<p class="muted">No one is watching yet. Show the QR code so people can scan it.</p>`}</div>
+        ${past.length ? `<p class="muted" style="margin:14px 0 6px">Watched earlier (${past.length})</p><div class="audience">${past.map(n => `<span class="tag" style="opacity:.6">${safe(n)}</span>`).join("")}</div>` : ""}`;
     }
     $("watchBtn").onclick = () => {
       const back = document.createElement("div");
@@ -225,6 +245,7 @@
         const all = Object.values(snap.val() || {});
         const pending = all.filter(m => !m.approved).length;
         bidderInfo = { pending, approved: all.length - pending };
+        keepWatchStats();
         $("bidderCount").hidden = !pending;
         $("bidderCount").textContent = pending;
         if (seenPending !== null && pending > seenPending) { sounds.going(); toast(`👥 ${pending} bidder${pending === 1 ? "" : "s"} waiting for approval`); }
@@ -1171,6 +1192,12 @@
           <span class="tour-logo showcase-logo" data-tour-logo hidden></span>
           <p class="bid-label">The hammer has fallen</p>
           <h2 class="title">Squads <span>revealed</span></h2>
+          ${(() => { const st = A.stats || {}, tv = Math.max(st.totalViewers || 0, DISPLAY ? 0 : Object.keys(watchLog).length);
+            return tv || st.bidders ? `<div class="watch-stats">
+              <div><b>${tv}</b><span>people watched</span></div>
+              <div><b>${st.peakViewers || 0}</b><span>peak at once</span></div>
+              <div><b>${st.bidders || 0}</b><span>team phones joined</span></div>
+              ${DISPLAY ? "" : `<button type="button" class="btn btn-light btn-sm" id="whoWatched">See names</button>`}</div>` : ""; })()}
           <div class="row" style="justify-content:center;margin-top:14px">
             <button id="csvBtn" class="btn btn-sun">Download results (.csv)</button>
             <button id="reopenBtn" class="btn btn-dark">Reopen auction</button>
@@ -1182,6 +1209,7 @@
           <p class="muted">${unsold.map(([, p]) => safe(p.name)).join(" · ")}</p>` : ""}`;
       animate(r);
       r.onclick = async e => {
+        if (e.target.closest("#whoWatched")) return $("watchBtn").click();
         const cb = e.target.closest("[data-card]"), cv = e.target.closest("[data-sqcsv]");
         const id = (cb || cv || {}).dataset ? (cb ? cb.dataset.card : cv && cv.dataset.sqcsv) : null;
         if (!id) return;

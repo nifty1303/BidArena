@@ -1179,3 +1179,9 @@ body.display-mode #nextUp { display: none !important; }
 /* Choose player: section headers and the unsold tag */
 .pick-list .pick-group { padding: 10px 4px 4px; font-size: 12px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted, #6b7c80); list-style: none; }
 .unsold-tag { display: inline-block; margin-left: 4px; padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 800; text-transform: uppercase; background: #FFE3E3; color: #B42318; vertical-align: 1px; }
+
+/* results: how many watched */
+.watch-stats { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; margin: 14px auto 0; }
+.watch-stats > div { min-width: 120px; padding: 10px 16px; border-radius: 14px; background: rgba(255, 255, 255, 0.9); border: 1px solid var(--line); text-align: center; }
+.watch-stats b { display: block; font-family: var(--display); font-size: 30px; line-height: 1; color: var(--accent); }
+.watch-stats span { font-size: 13px; font-weight: 700; color: var(--muted, #6b7c80); }

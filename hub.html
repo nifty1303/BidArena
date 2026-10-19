@@ -37,7 +37,10 @@
 
     // ---------- data ----------
     const H = () => (A && A.hub) || {};
-    const HS = () => ({ win: 3, draw: 1, loss: 0, qualify: 0, ...(H().settings || {}) });
+    const HS = () => ({ win: 3, draw: 1, loss: 0, qualify: 0, pens: false, penWin: 2, penLoss: 1, ...(H().settings || {}) });
+    // league draws settled by a shootout (when the tournament plays it that way)
+    const shootout = f => { const s = scoreOf(f); return s.h === s.a && f.pens && f.pens.h != null && f.pens.a != null && f.pens.h !== f.pens.a ? (f.pens.h > f.pens.a ? "h" : "a") : null; };
+    const pensFor = f => isKO(f.stage) || (HS().pens && (f.stage || "league") === "league");
     const teams = () => Object.entries((A && A.teams) || {});
     const team = id => ((A && A.teams) || {})[id] || { name: "TBD", color: "#8895A0" };
     const crest = (id, size = "") => crestHTML(team(id), logoOf(logos, id), size);
@@ -68,12 +71,16 @@
 
     function standings() {
       const P = HS(), rows = {};
-      teams().forEach(([id]) => { rows[id] = { id, p: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, pts: 0, form: [] }; });
+      teams().forEach(([id]) => { rows[id] = { id, p: 0, w: 0, d: 0, l: 0, pw: 0, pl: 0, gf: 0, ga: 0, pts: 0, form: [] }; });
       fixtures().filter(f => played(f) && (f.stage || "league") === "league" && rows[f.home] && rows[f.away]).forEach(f => {
         const { h, a } = scoreOf(f), H_ = rows[f.home], W = rows[f.away];
         H_.p++; W.p++; H_.gf += h; H_.ga += a; W.gf += a; W.ga += h;
         if (h > a) { H_.w++; W.l++; H_.pts += P.win; W.pts += P.loss; H_.form.push("W"); W.form.push("L"); }
         else if (h < a) { W.w++; H_.l++; W.pts += P.win; H_.pts += P.loss; W.form.push("W"); H_.form.push("L"); }
+        else if (P.pens && shootout(f)) {                       // drawn, then won on penalties
+          const [win, lose] = shootout(f) === "h" ? [H_, W] : [W, H_];
+          win.pw++; lose.pl++; win.pts += +P.penWin || 0; lose.pts += +P.penLoss || 0; win.form.push("PW"); lose.form.push("PL");
+        }
         else { H_.d++; W.d++; H_.pts += P.draw; W.pts += P.draw; H_.form.push("D"); W.form.push("D"); }
       });
       return Object.values(rows).sort((x, y) => y.pts - x.pts || (y.gf - y.ga) - (x.gf - x.ga) || y.gf - x.gf || String(team(x.id).name).localeCompare(team(y.id).name));
@@ -231,21 +238,22 @@
 
     // ---------- Table ----------
     function tableHTML(rows, mini = false) {
-      const q = +HS().qualify || 0;
+      const q = +HS().qualify || 0, pens = !!HS().pens, showD = !pens || rows.some(r => r.d);
+      const formI = x => x === "PW" ? `<i class="PW" title="Won on penalties">W</i>` : x === "PL" ? `<i class="PL" title="Lost on penalties">L</i>` : `<i class="${x}">${x}</i>`;
       return `<div class="hub-table-wrap"><table class="hub-table ${mini ? "mini" : ""}">
-        <thead><tr><th>#</th><th class="tl">Team</th><th>P</th>${mini ? "" : `<th>W</th><th>D</th><th>L</th><th class="hide-sm">GF</th><th class="hide-sm">GA</th>`}<th>GD</th><th>Pts</th>${mini ? "" : `<th class="hide-sm tl">Form</th>`}</tr></thead>
+        <thead><tr><th>#</th><th class="tl">Team</th><th>P</th>${mini ? "" : `<th>W</th>${pens ? `<th title="Won on penalties">PW</th><th title="Lost on penalties">PL</th>` : ""}${showD ? "<th>D</th>" : ""}<th>L</th><th class="hide-sm">GF</th><th class="hide-sm">GA</th>`}<th>GD</th><th>Pts</th>${mini ? "" : `<th class="hide-sm tl">Form</th>`}</tr></thead>
         <tbody>${rows.map((r, i) => `<tr class="${q && i < q ? "q" : ""}" style="--c:${safe(team(r.id).color)}">
           <td class="pos">${i + 1}</td>
           <td class="tl"><span class="tt">${crest(r.id, "sm")}<b>${safe(team(r.id).name)}</b></span></td>
-          <td>${r.p}</td>${mini ? "" : `<td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td class="hide-sm">${r.gf}</td><td class="hide-sm">${r.ga}</td>`}
+          <td>${r.p}</td>${mini ? "" : `<td>${r.w}</td>${pens ? `<td>${r.pw}</td><td>${r.pl}</td>` : ""}${showD ? `<td>${r.d}</td>` : ""}<td>${r.l}</td><td class="hide-sm">${r.gf}</td><td class="hide-sm">${r.ga}</td>`}
           <td>${r.gf - r.ga > 0 ? "+" : ""}${r.gf - r.ga}</td><td class="pts">${r.pts}</td>
-          ${mini ? "" : `<td class="hide-sm tl"><span class="form">${r.form.slice(-5).map(x => `<i class="${x}">${x}</i>`).join("") || "<small class='muted'>–</small>"}</span></td>`}</tr>`).join("")}</tbody></table></div>`;
+          ${mini ? "" : `<td class="hide-sm tl"><span class="form">${r.form.slice(-5).map(formI).join("") || "<small class='muted'>–</small>"}</span></td>`}</tr>`).join("")}</tbody></table></div>`;
     }
     function tableTab() {
       const P = HS(), q = +P.qualify || 0;
       const ko = fixtures().filter(f => isKO(f.stage));
       return `<section class="hub-sec">${tableHTML(standings())}
-          <p class="hub-note">Win ${P.win} · Draw ${P.draw} · Loss ${P.loss} pts. Ties split by goal difference, then goals scored.${q ? ` <span class="q-key"></span> Top ${q} qualify.` : ""} League matches only.</p></section>
+          <p class="hub-note">${P.pens ? `Win ${P.win} · Draw then win on penalties ${P.penWin} · Draw then lose on penalties ${P.penLoss} · Loss ${P.loss} pts. PW/PL = won/lost on penalties (outlined in Form).` : `Win ${P.win} · Draw ${P.draw} · Loss ${P.loss} pts.`} Ties split by goal difference, then goals scored.${q ? ` <span class="q-key"></span> Top ${q} qualify.` : ""} League matches only.</p></section>
         ${ko.length ? `<section class="hub-sec"><h2 class="hub-h">Knockouts</h2><div class="mc-list">${ko.map(f => matchCard(f)).join("")}</div></section>` : ""}`;
     }
 
@@ -442,11 +450,16 @@
           <label>Points for a draw<input class="input" type="number" min="0" id="pD" value="${P.draw}"></label>
           <label>Points for a loss<input class="input" type="number" id="pL" value="${P.loss}"></label>
           <label>Teams that qualify <small class="muted">(highlighted, 0 = none)</small><input class="input" type="number" min="0" id="pQ" value="${P.qualify || 0}"></label>
+          <label class="hub-check full"><input type="checkbox" id="pPens" ${P.pens ? "checked" : ""}> Drawn league matches go to a penalty shootout</label>
+          <label class="pens-f" ${P.pens ? "" : "hidden"}>Points for winning the shootout<input class="input" type="number" min="0" id="pPW" value="${P.penWin}"></label>
+          <label class="pens-f" ${P.pens ? "" : "hidden"}>Points for losing the shootout<input class="input" type="number" min="0" id="pPL" value="${P.penLoss}"></label>
         </div>
         <div class="dlg-actions"><button class="btn btn-light" data-cancel>Cancel</button><button class="btn btn-sun" id="pSave">Save</button></div>`,
         (back, close) => {
+          back.querySelector("#pPens").onchange = e => back.querySelectorAll(".pens-f").forEach(el => { el.hidden = !e.target.checked; });
           back.querySelector("#pSave").onclick = async () => {
-            await update(ref(db, `auctions/${code}/hub/settings`), { win: +back.querySelector("#pW").value || 0, draw: +back.querySelector("#pD").value || 0, loss: +back.querySelector("#pL").value || 0, qualify: +back.querySelector("#pQ").value || 0 });
+            await update(ref(db, `auctions/${code}/hub/settings`), { win: +back.querySelector("#pW").value || 0, draw: +back.querySelector("#pD").value || 0, loss: +back.querySelector("#pL").value || 0, qualify: +back.querySelector("#pQ").value || 0,
+              pens: back.querySelector("#pPens").checked, penWin: +back.querySelector("#pPW").value || 0, penLoss: +back.querySelector("#pPL").value || 0 });
             close(true);
           };
         });
@@ -495,7 +508,7 @@
           <p class="hm-meta">${safe(STAGES[f.stage || "league"])}${f.round ? ` · Round ${f.round}` : ""}${f.at ? ` · ${fmtShort(f.at)}, ${fmtTime(f.at)}` : ""}</p>
           <div class="hub-seg rs-status">${[["scheduled", "Not started"], ["live", "🔴 Live"], ["done", "Full time"]].map(([k, l]) => `<button type="button" class="${(f.status || "scheduled") === k ? "on" : ""}" data-status="${k}">${l}</button>`).join("")}</div>
           <div class="rs-grid">${side(f.home, "h")}${side(f.away, "a")}</div>
-          ${isKO(f.stage) && s.h === s.a ? `<div class="rs-pens"><b>Penalty shootout</b> <input class="input" type="number" min="0" id="pnH" value="${f.pens && f.pens.h != null ? f.pens.h : ""}" placeholder="${safe(team(f.home).name)}"> – <input class="input" type="number" min="0" id="pnA" value="${f.pens && f.pens.a != null ? f.pens.a : ""}" placeholder="${safe(team(f.away).name)}"></div>` : ""}
+          ${pensFor(f) && s.h === s.a ? `<div class="rs-pens"><b>Penalty shootout</b> <input class="input" type="number" min="0" id="pnH" value="${f.pens && f.pens.h != null ? f.pens.h : ""}" placeholder="${safe(team(f.home).name)}"> – <input class="input" type="number" min="0" id="pnA" value="${f.pens && f.pens.a != null ? f.pens.a : ""}" placeholder="${safe(team(f.away).name)}"></div>` : ""}
           <label class="rs-motm">⭐ Player of the match<select class="select" id="rsMotm">${motmOpts}</select></label>
           <p class="hint" style="text-align:center;margin-top:12px">Every change is saved instantly and shows on everyone's screen.</p>
           <div class="dlg-actions"><button class="btn btn-sun" data-done>Done</button></div>

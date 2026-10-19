@@ -1548,3 +1548,20 @@ body.has-reactdock .wrap { padding-bottom: 90px; }
 .mc.mini .mc-tools { margin-top: 6px; padding-top: 6px; }
 .mc.mini .mc-tools .btn { padding: 6px 10px; font-size: 12px; }
 @media (max-width: 760px) { .hub-lead { grid-template-columns: 1fr; } }
+
+/* phones: team codes instead of cut-off names; the table always fits, points included */
+.nm-ab { display: none; }
+@media (max-width: 760px) {
+  .mc .nm-full, .hub-table .nm-full { display: none; }
+  .mc .nm-ab, .hub-table .nm-ab { display: inline; letter-spacing: 0.04em; }
+  .mc-team { font-family: var(--display); font-size: 18px; font-weight: 800; }
+  .mc.big .mc-team { font-size: 22px; }
+  .hub-table th, .hub-table td { padding: 8px 4px; }
+  .hub-table th { font-size: 11px; letter-spacing: 0.02em; }
+  .hub-table .pos { width: 22px; font-size: 16px; }
+  .hub-table .tt { gap: 6px; }
+  .hub-table .tt b { font-family: var(--display); font-size: 16px; }
+  .hub-table .tt .crest { width: 26px; height: 26px; border-radius: 8px; font-size: 10px; }
+  .hub-table .pts { font-size: 18px; }
+  .hub-table-wrap { margin: 0 -6px; }
+}

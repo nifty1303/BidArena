@@ -87,7 +87,7 @@
       catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine,
       dialog, alertBox, confirmBox, copyText, teamBudget, purseLeftOf,
       playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
-      mountBidders, watchConnection, ensureGuest, showBreak, squadCardBlob, squadCSV, shareOrDownload, allSquadsCardBlob, downloadBlob, fileSafe, teamSquad, refreshTourLogo, renderSquadShow, catIntroHTML, introOn, lotSounds
+      mountBidders, watchConnection, ensureGuest, showBreak, squadCardBlob, squadCSV, shareOrDownload, allSquadsCardBlob, downloadBlob, fileSafe, squadGroupsHTML, teamSquad, refreshTourLogo, renderSquadShow, catIntroHTML, introOn, lotSounds
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction room");
@@ -1182,7 +1182,7 @@
           <div class="squad" style="--c:${safe(t.color)}">
             <div class="squad-head">${crest(id, "lg")}<div><h3>${safe(t.name)}</h3><span class="muted">${mine.length} player${mine.length === 1 ? "" : "s"} · spent ${money(t.spent || 0, s)} · ${money(purseLeftOf(t, s), s)} left</span></div></div>
             ${missing.length ? `<p class="short-note">Short of minimum: ${safe(missing.join(", "))}</p>` : ""}
-            <ul>${mine.map(([, p]) => `<li><span>${safe(p.name)}<span class="cat">${safe(catOf(p).name)}</span></span><span>${money(p.price, s)}</span></li>`).join("") || `<li><span class="muted">No players</span><span></span></li>`}</ul>
+            ${squadGroupsHTML(A, id, { empty: "No players" })}
             <div class="squad-actions"><button class="btn btn-light btn-sm" data-cardget="${id}">⬇ Card</button><button class="btn btn-light btn-sm" data-card="${id}">📤 Share</button><button class="btn btn-light btn-sm" data-sqcsv="${id}">⬇ CSV</button></div>
           </div>`;
       }).join("");

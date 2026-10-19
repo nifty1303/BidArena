@@ -864,6 +864,11 @@ export function teamSquad(A, tid) {
     .sort((a, b) => cats.findIndex(c => c.id === a.cat) - cats.findIndex(c => c.id === b.cat) || (b.price || 0) - (a.price || 0));
 }
 
+// Players added to a team outside the auction (lottery, draft…), and how they joined
+export const SIGN_WAYS = { lottery: "🎟 Lottery", draft: "📝 Draft", direct: "✍️ Direct signing", replacement: "🔁 Replacement", other: "➕ Other" };
+export const viaLabel = p => !p || !p.via ? "" : p.via === "other" && p.viaNote ? "➕ " + p.viaNote : SIGN_WAYS[p.via] || "➕ Added";
+export const viaText = p => viaLabel(p).replace(/^\S+\s/, "");          // without the emoji (for pictures and spreadsheets)
+
 // A readable category colour for text on white (the bright ones get darkened)
 export const catInk = (s, catId) => { const c = catColour(s, catId); return isLight(c) ? shade(c, -0.5) : c; };
 
@@ -871,14 +876,14 @@ export const catInk = (s, catId) => { const c = catColour(s, catId); return isLi
 export function squadGroupsHTML(A, tid, opts = {}) {
   const s = A.settings || {}, squad = teamSquad(A, tid);
   if (!squad.length) return `<p class="sg-empty">${safe(opts.empty || "No players bought yet")}</p>`;
-  const top = squad.reduce((m, p) => (!m || (p.price || 0) > (m.price || 0) ? p : m), null);
+  const top = squad.filter(p => !p.via).reduce((m, p) => (!m || (p.price || 0) > (m.price || 0) ? p : m), null);
   const groups = catList(s).map(c => ({ c, list: squad.filter(p => p.cat === c.id) })).filter(g => g.list.length);
   const other = squad.filter(p => !catList(s).some(c => c.id === p.cat));
   if (other.length) groups.push({ c: { id: "", name: "Other" }, list: other });
   return `<div class="sgroups">${groups.map(({ c, list }) => `
     <section class="sg" style="--cc:${catColour(s, c.id)};--ci:${catInk(s, c.id)}">
       <header><span class="sg-dot"></span><b>${safe(c.name)}</b><span class="sg-meta">${list.length} · ${money(list.reduce((n, p) => n + (p.price || 0), 0), s)}</span></header>
-      <ul>${list.map(p => `<li${p === top && squad.length > 1 ? ' class="top"' : ""}><span class="sg-name">${safe(p.name)}${opts.pos !== false && positionOf(p, s) ? `<small>${safe(positionOf(p, s))}</small>` : ""}</span><span class="sg-price">${p === top && squad.length > 1 ? "⭐ " : ""}${money(p.price, s)}</span></li>`).join("")}</ul>
+      <ul>${list.map(p => `<li${p === top && squad.length > 1 ? ' class="top"' : ""}><span class="sg-name">${safe(p.name)}${p.via ? ` <i class="via-tag">${safe(viaLabel(p))}</i>` : ""}${opts.pos !== false && positionOf(p, s) ? `<small>${safe(positionOf(p, s))}</small>` : ""}</span><span class="sg-price ${p.via && !(p.price > 0) ? "via" : ""}">${p.via && !(p.price > 0) ? "Not auctioned" : `${p === top && squad.length > 1 ? "⭐ " : ""}${money(p.price, s)}`}</span></li>`).join("")}</ul>
     </section>`).join("")}</div>`;
 }
 
@@ -919,12 +924,13 @@ export async function squadCardBlob(A, tid) {
     const y = top + 20 + i * rowH;
     if (i && squad[i - 1].cat === p.cat) { g.fillStyle = "rgba(0,0,0,0.08)"; g.fillRect(x0 + 30, y, x1 - x0 - 60, 2); }
     g.fillStyle = catColour(s, p.cat); g.fillRect(x0 + 14, y + 6, 7, rowH - 12);          // category colour
-    const sub = [(cats.find(cc => cc.id === p.cat) || {}).name, ((schemaFor(s.sport) || { roles: {} }).roles[p.role] || {}).name].filter(Boolean).join(" · ");
+    const sub = [(cats.find(cc => cc.id === p.cat) || {}).name, ((schemaFor(s.sport) || { roles: {} }).roles[p.role] || {}).name, p.via ? "via " + viaText(p).toLowerCase() : ""].filter(Boolean).join(" · ");
     g.fillStyle = "#13262A"; g.font = `700 ${big}px Barlow, sans-serif`;
     g.fillText(String(p.name), x0 + 34, y + rowH * (sub && rowH > 50 ? 0.48 : 0.62), x1 - x0 - 300);
     if (sub && rowH > 50) { g.fillStyle = catInk(s, p.cat); g.font = `600 ${Math.round(big * 0.62)}px Barlow, sans-serif`; g.fillText(sub, x0 + 34, y + rowH * 0.84, x1 - x0 - 300); }
     g.fillStyle = shade(col, isLight(col) ? -0.45 : 0); g.font = `800 ${Math.round(big * 1.15)}px 'Barlow Condensed', sans-serif`;
-    g.textAlign = "right"; g.fillText(money(p.price, s), x1 - 34, y + rowH * 0.66); g.textAlign = "left";
+    if (p.via && !(p.price > 0)) g.font = `800 ${Math.round(big * 0.75)}px 'Barlow Condensed', sans-serif`;
+    g.textAlign = "right"; g.fillText(p.via && !(p.price > 0) ? viaText(p).toUpperCase() : money(p.price, s), x1 - 34, y + rowH * 0.66, 260); g.textAlign = "left";
   });
   if (!squad.length) { g.fillStyle = "#5B6B6E"; g.font = "600 36px Barlow, sans-serif"; g.fillText("No players bought", x0 + 34, top + 80); }
   g.fillStyle = ink; g.globalAlpha = 0.8; g.font = "700 28px Barlow, sans-serif";
@@ -934,8 +940,8 @@ export async function squadCardBlob(A, tid) {
 
 export function squadCSV(A, tid) {
   const s = A.settings || {}, t = (A.teams || {})[tid] || {}, cats = catList(s);
-  const rows = [["Team", "Player", "Position", "Category", "Price"]];
-  teamSquad(A, tid).forEach(p => rows.push([t.name, p.name, playerLine(p, s), (cats.find(c => c.id === p.cat) || {}).name || "", p.price]));
+  const rows = [["Team", "Player", "Position", "Category", "Price", "Signed via"]];
+  teamSquad(A, tid).forEach(p => rows.push([t.name, p.name, playerLine(p, s), (cats.find(c => c.id === p.cat) || {}).name || "", p.price || 0, p.via ? viaText(p) : "Auction"]));
   rows.push([]); rows.push(["Spent", t.spent || 0]); rows.push(["Left", purseLeftOf(t, s)]);
   return toCSV(rows);
 }
@@ -995,9 +1001,10 @@ export async function allSquadsCardBlob(A) {
       const cat = (cats.find(cc => cc.id === p.cat) || {}).name || "";
       g.fillStyle = "#13262A"; g.font = "700 23px Barlow, sans-serif";
       g.fillText(String(p.name), x + 24, ry + 27, colW - 160);
-      if (cat) { g.fillStyle = catInk(s, p.cat); g.font = "700 15px Barlow, sans-serif"; g.fillText(cat, x + 24, ry + 46, colW - 160); }
+      if (cat || p.via) { g.fillStyle = catInk(s, p.cat); g.font = "700 15px Barlow, sans-serif"; g.fillText([cat, p.via ? "via " + viaText(p).toLowerCase() : ""].filter(Boolean).join(" · "), x + 24, ry + 46, colW - 160); }
       g.fillStyle = shade(col, isLight(col) ? -0.45 : 0); g.font = "800 28px 'Barlow Condensed', sans-serif";
-      g.textAlign = "right"; g.fillText(money(p.price, s), x + colW - 24, ry + 36); g.textAlign = "left";
+      if (p.via && !(p.price > 0)) g.font = "800 20px 'Barlow Condensed', sans-serif";
+      g.textAlign = "right"; g.fillText(p.via && !(p.price > 0) ? viaText(p).toUpperCase() : money(p.price, s), x + colW - 24, ry + 36, 130); g.textAlign = "left";
     });
     if (!squad.length) { g.fillStyle = "#6B7C80"; g.font = "600 22px Barlow, sans-serif"; g.fillText("No players bought", x + 24, y + headH + 44); }
   });

@@ -1435,3 +1435,9 @@ body.has-reactdock .wrap { padding-bottom: 90px; }
   .hm-team .crest.xl { width: 60px; height: 60px; font-size: 22px; }
   .ev { width: 92%; }
 }
+
+.react-bar[hidden] { display: none; }
+.react-bar.cool button { opacity: 0.4; pointer-events: none; }
+.react-bar.cool { background-image: linear-gradient(90deg, color-mix(in srgb, var(--accent) 14%, transparent) 0 0); background-repeat: no-repeat; background-size: 0% 100%; animation: rxCool var(--cool, 1s) linear forwards; }
+@keyframes rxCool { from { background-size: 0% 100%; } to { background-size: 100% 100%; } }
+.react-ctl { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 12px; margin-bottom: 12px; border-radius: 14px; background: var(--panel2); }

@@ -89,6 +89,7 @@
       readSheetFile, norm, matchRole, matchSub, matchHand, cleanAge,
       dialog, alertBox, confirmBox, copyText, teamBudget, allMaxBids, compressBanner, loadBanners, mountBidders, initials, positionOf,
       compressLogo, refreshTourLogo, clearTourLogo
+    , REACT_GAPS
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction setup");
@@ -557,6 +558,12 @@
              <p class="hint">The timer restarts after every bid. When it runs out, the player is sold.</p>
              <label class="check switch-row"><input type="checkbox" id="sFair" ${s.fairForced ? "checked" : ""}>
                <span><b>Fair price for uncontested players</b><br><small>When only one team can still buy a player and it must (e.g. 3 teams each need exactly 1 of 3 players, so the last one has no rival), it gets the player at the lowest price paid in that category, not the base price. You confirm each time.</small></span></label>`)}
+          ${sec("rose", "🔥", "Live reactions", "Viewers and teams tap 🔥 👏 😱 ❤️ 😂 💰 on their phones and it floats up on the big screen.",
+            `<label class="check switch-row"><input type="checkbox" id="sReact" ${s.reactOn !== false ? "checked" : ""}>
+               <span><b>Allow reactions</b><br><small>You can also switch this on or off during the auction from 👀 in the control room.</small></span></label>
+             <div style="margin-top:10px"><label class="label" for="sReactGap">Anti-spam: each person can react once every</label>
+               <select id="sReactGap" class="select" ${s.reactOn === false ? "disabled" : ""}>${REACT_GAPS.map(g => `<option value="${g}" ${(+s.reactGap || 1) === g ? "selected" : ""}>${g < 1 ? "half a second" : g === 1 ? "1 second" : g + " seconds"}</option>`).join("")}</select></div>
+             <p class="hint">The database enforces this too, so nobody can flood the screen.</p>`)}
         </div>
         <div style="margin-top:14px">${logoSecHTML()}</div>
         <div style="margin-top:14px">${bannerSecHTML()}</div>
@@ -695,6 +702,8 @@
       else if (t.id === "sTimer") s.timerSec = Number(t.value);
       else if (t.id === "sOrder") s.order = t.value;
       else if (t.id === "sFair") s.fairForced = t.checked;
+      else if (t.id === "sReact") { s.reactOn = t.checked; saveSettings(); renderBasics(); return; }
+      else if (t.id === "sReactGap") s.reactGap = Number(t.value);
       else if (t.id === "sMode") { s.squadMode = t.value; saveSettings(); renderBasics(); return; }
       else return;
       saveSettings();

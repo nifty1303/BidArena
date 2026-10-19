@@ -1190,15 +1190,20 @@ export function catIntroHTML(A, live) {
 // ============================================================
 export const REACTIONS = [["fire", "🔥"], ["clap", "👏"], ["wow", "😱"], ["love", "❤️"], ["laugh", "😂"], ["money", "💰"]];
 const reactEmoji = id => (REACTIONS.find(r => r[0] === id) || [, ""])[1];
-let reactTimes = [];
-// Sends one reaction (at most ~2 a second and 8 in 5 seconds per phone, so no one floods the screen)
-export function sendReaction(code, uid, name, e) {
+export const REACT_GAPS = [0.5, 1, 2, 3, 5, 10, 30];
+export const reactOn = A => !!A && (A.settings || {}).reactOn !== false;
+export const reactGapMs = A => Math.round((+((A && A.settings) || {}).reactGap || 1) * 1000);
+let lastReact = 0;
+// Sends one reaction, at most one per person every few seconds (the host sets how often; the database checks it too)
+export function sendReaction(code, uid, name, e, gapMs = 1000) {
   const now = Date.now();
-  reactTimes = reactTimes.filter(t => now - t < 5000);
-  if (reactTimes.length >= 8 || (reactTimes.length && now - reactTimes[reactTimes.length - 1] < 450)) return false;
-  reactTimes.push(now);
-  const r = push(ref(db, `auctionReactions/${code}`));
-  set(r, { e, at: serverTimestamp(), uid, ...(name ? { n: cleanName(name).slice(0, 24) } : {}) }).catch(() => {});
+  if (now - lastReact < gapMs + 80) return false;
+  lastReact = now;
+  const key = push(ref(db, `auctionReactions/${code}`)).key;
+  update(ref(db), {
+    [`auctionReactions/${code}/${key}`]: { e, at: serverTimestamp(), uid, ...(name ? { n: cleanName(name).slice(0, 24) } : {}) },
+    [`auctionReactLast/${code}/${uid}`]: serverTimestamp()
+  }).catch(() => {});
   try { navigator.vibrate && navigator.vibrate(15); } catch (err) {}
   return true;
 }
@@ -1215,6 +1220,14 @@ export async function pruneReactions(code) {
     Object.keys(old.val() || {}).forEach(k => { ch[`auctionReactions/${code}/${k}`] = null; });
     if (Object.keys(ch).length) await update(ref(db), ch);
   } catch (e) {}
+}
+// Greys the buttons out until the next reaction is allowed
+export function coolReactBars(ms) {
+  document.querySelectorAll(".react-bar").forEach(bar => {
+    bar.style.setProperty("--cool", `${ms}ms`);
+    bar.classList.remove("cool"); void bar.offsetWidth; bar.classList.add("cool");
+    clearTimeout(bar._cool); bar._cool = setTimeout(() => bar.classList.remove("cool"), ms);
+  });
 }
 // One emoji floating up the screen (with the sender's name on big screens)
 export function floatReaction(v, opts = {}) {

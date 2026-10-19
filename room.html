@@ -87,7 +87,7 @@
       catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine,
       dialog, alertBox, confirmBox, copyText, teamBudget, purseLeftOf,
       playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
-      mountBidders, watchConnection, ensureGuest, showBreak, squadCardBlob, squadCSV, shareOrDownload, allSquadsCardBlob, downloadBlob, fileSafe, squadGroupsHTML, watchReactions, floatReaction, pruneReactions, teamSquad, refreshTourLogo, renderSquadShow, catIntroHTML, introOn, lotSounds
+      mountBidders, watchConnection, ensureGuest, showBreak, squadCardBlob, squadCSV, shareOrDownload, allSquadsCardBlob, downloadBlob, fileSafe, squadGroupsHTML, watchReactions, floatReaction, pruneReactions, REACT_GAPS, teamSquad, refreshTourLogo, renderSquadShow, catIntroHTML, introOn, lotSounds
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction room");
@@ -230,7 +230,10 @@
       const names = Object.values(viewers).map(v => v.name).sort((a, b) => a.localeCompare(b));
       const st = (A && A.stats) || {}, total = Math.max(Object.keys(watchLog).length, st.totalViewers || 0);
       const past = Object.entries(watchLog).filter(([uid]) => !viewers[uid]).map(([, v]) => v.name).sort((a, b) => a.localeCompare(b));
-      box.innerHTML = `<p><b>${names.length}</b> watching · <b>${Object.keys(onlineBidders).length}</b> bidder phone${Object.keys(onlineBidders).length === 1 ? "" : "s"} connected</p>
+      const rs = (A && A.settings) || {};
+      box.innerHTML = `<div class="react-ctl"><label class="hub-switch"><input type="checkbox" id="rcOn" ${rs.reactOn !== false ? "checked" : ""}><span></span> 🔥 Live reactions</label>
+          <label class="muted" style="font-size:13px">one per person every <select id="rcGap" class="select" style="width:auto;display:inline-block;padding:6px 30px 6px 10px" ${rs.reactOn === false ? "disabled" : ""}>${REACT_GAPS.map(g => `<option value="${g}" ${(+rs.reactGap || 1) === g ? "selected" : ""}>${g < 1 ? "0.5 s" : g + " s"}</option>`).join("")}</select></label></div>
+        <p><b>${names.length}</b> watching · <b>${Object.keys(onlineBidders).length}</b> bidder phone${Object.keys(onlineBidders).length === 1 ? "" : "s"} connected</p>
         <p class="muted" style="margin-top:-4px">So far: <b>${total}</b> ${total === 1 ? "person has" : "people have"} watched · peak <b>${st.peakViewers || names.length}</b> at once</p>
         <div class="audience">${names.map(n => `<span class="tag">👀 ${safe(n)}</span>`).join("") || `<p class="muted">No one is watching yet. Show the QR code so people can scan it.</p>`}</div>
         ${past.length ? `<p class="muted" style="margin:14px 0 6px">Watched earlier (${past.length})</p><div class="audience">${past.map(n => `<span class="tag" style="opacity:.6">${safe(n)}</span>`).join("")}</div>` : ""}`;
@@ -243,6 +246,10 @@
       document.body.appendChild(back);
       drawAudience();
       back.addEventListener("click", e => { if (e.target === back || e.target.closest(".modal-x")) back.remove(); });
+      back.addEventListener("change", e => {
+        if (e.target.id === "rcOn") { back.querySelector("#rcGap").disabled = !e.target.checked; update(ref(db, `auctions/${code}/settings`), { reactOn: e.target.checked }); }
+        if (e.target.id === "rcGap") update(ref(db, `auctions/${code}/settings`), { reactGap: Number(e.target.value) });
+      });
     };
 
     // ---------- bidders (team phones ask, the host approves) ----------

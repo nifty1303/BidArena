@@ -920,15 +920,86 @@ export function squadCSV(A, tid) {
   return toCSV(rows);
 }
 
+// Every team side by side in one picture (columns of up to 4 teams)
+export async function allSquadsCardBlob(A) {
+  const s = A.settings || {}, cats = catList(s);
+  const T = Object.entries(A.teams || {});
+  const n = Math.max(1, T.length), cols = Math.min(n, 4), rowsN = Math.ceil(n / cols);
+  const squads = T.map(([id]) => teamSquad(A, id));
+  const most = Math.max(1, ...squads.map(q => q.length));
+  const colW = 440, gap = 28, pad = 60, rowH = 54, headH = 128;
+  const cardH = headH + 24 + most * rowH + 20;
+  const W = pad * 2 + cols * colW + (cols - 1) * gap;
+  const topH = 250, H = topH + rowsN * cardH + (rowsN - 1) * gap + 110;
+  try { await Promise.all([document.fonts.load("800 90px 'Barlow Condensed'"), document.fonts.load("700 30px Barlow")]); } catch (e) {}
+  const c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  const bg = g.createLinearGradient(0, 0, W, H); bg.addColorStop(0, "#14523D"); bg.addColorStop(1, "#0A1F18");
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  const fit = (text, font, size, max) => { do { g.font = font.replace("{s}", size); size -= 2; } while (g.measureText(text).width > max && size > 14); };
+  const rr = (x, y, w, h, r) => { g.beginPath(); g.roundRect ? g.roundRect(x, y, w, h, r) : g.rect(x, y, w, h); };
+  let logoW = 0;
+  if (tourLogo) {
+    try {
+      const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = tourLogo; });
+      const box = 160, k = Math.min(box / im.width, box / im.height);
+      logoW = Math.round(im.width * k) + 30;
+      g.drawImage(im, W - pad - im.width * k, 50, im.width * k, im.height * k);
+    } catch (e) {}
+  }
+  g.fillStyle = "#FFFFFF"; g.globalAlpha = 0.85;
+  fit((A.title || "Auction").toUpperCase(), "700 {s}px Barlow, sans-serif", 34, W - pad * 2 - logoW);
+  g.fillText((A.title || "Auction").toUpperCase(), pad, 92);
+  g.globalAlpha = 1;
+  fit("SQUADS", "800 {s}px 'Barlow Condensed', sans-serif", 110, W - pad * 2 - logoW);
+  g.fillText("SQUADS", pad, 196);
+  const sw = g.measureText("SQUADS ").width;
+  g.fillStyle = "#D6FF3F"; g.fillText("REVEALED", pad + sw, 196);
+  T.forEach(([id, t], i) => {
+    const x = pad + (i % cols) * (colW + gap), y = topH + Math.floor(i / cols) * (cardH + gap);
+    const col = t.color || "#1D5FD1", ink = isLight(col) ? "#13262A" : "#FFFFFF", squad = squads[i];
+    g.fillStyle = "rgba(255,255,255,0.96)"; rr(x, y, colW, cardH, 26); g.fill();
+    g.save(); rr(x, y, colW, cardH, 26); g.clip();
+    const hg = g.createLinearGradient(x, y, x + colW, y + headH); hg.addColorStop(0, shade(col, 0.1)); hg.addColorStop(1, shade(col, -0.35));
+    g.fillStyle = hg; g.fillRect(x, y, colW, headH); g.restore();
+    g.fillStyle = ink;
+    fit(String(t.name || "Team").toUpperCase(), "800 {s}px 'Barlow Condensed', sans-serif", 54, colW - 48);
+    g.fillText(String(t.name || "Team").toUpperCase(), x + 24, y + 62);
+    g.font = "700 21px Barlow, sans-serif"; g.globalAlpha = 0.9;
+    g.fillText(`${squad.length} player${squad.length === 1 ? "" : "s"} · spent ${money(t.spent || 0, s)} · ${money(purseLeftOf(t, s), s)} left`, x + 24, y + 102, colW - 48);
+    g.globalAlpha = 1;
+    squad.forEach((p, j) => {
+      const ry = y + headH + 12 + j * rowH;
+      if (j) { g.fillStyle = "rgba(0,0,0,0.08)"; g.fillRect(x + 20, ry, colW - 40, 2); }
+      const cat = (cats.find(cc => cc.id === p.cat) || {}).name || "";
+      g.fillStyle = "#13262A"; g.font = "700 23px Barlow, sans-serif";
+      g.fillText(String(p.name), x + 24, ry + 27, colW - 160);
+      if (cat) { g.fillStyle = "#6B7C80"; g.font = "600 15px Barlow, sans-serif"; g.fillText(cat, x + 24, ry + 46, colW - 160); }
+      g.fillStyle = shade(col, isLight(col) ? -0.45 : 0); g.font = "800 28px 'Barlow Condensed', sans-serif";
+      g.textAlign = "right"; g.fillText(money(p.price, s), x + colW - 24, ry + 36); g.textAlign = "left";
+    });
+    if (!squad.length) { g.fillStyle = "#6B7C80"; g.font = "600 22px Barlow, sans-serif"; g.fillText("No players bought", x + 24, y + headH + 44); }
+  });
+  g.fillStyle = "#FFFFFF"; g.globalAlpha = 0.75; g.font = "700 24px Barlow, sans-serif";
+  g.fillText("BidArena · live player auction", pad, H - 44); g.globalAlpha = 1;
+  return new Promise(res => c.toBlob(res, "image/png"));
+}
+
+// Save a file straight to the computer / phone
+export function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob), a = document.createElement("a");
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+export const fileSafe = text => String(text || "").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-") || "squads";
+
 // Share a file (phones open WhatsApp etc.), or download it where sharing isn't available
 export async function shareOrDownload(blob, filename, text = "") {
   const file = new File([blob], filename, { type: blob.type });
   try {
     if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], text }); return; }
   } catch (e) { if (e && e.name === "AbortError") return; }
-  const url = URL.createObjectURL(blob), a = document.createElement("a");
-  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  downloadBlob(blob, filename);
 }
 
 

@@ -863,6 +863,24 @@ export function teamSquad(A, tid) {
     .sort((a, b) => cats.findIndex(c => c.id === a.cat) - cats.findIndex(c => c.id === b.cat) || (b.price || 0) - (a.price || 0));
 }
 
+// A readable category colour for text on white (the bright ones get darkened)
+export const catInk = (s, catId) => { const c = catColour(s, catId); return isLight(c) ? shade(c, -0.5) : c; };
+
+// A team's squad grouped by category: coloured header with count and spend, then the players
+export function squadGroupsHTML(A, tid, opts = {}) {
+  const s = A.settings || {}, squad = teamSquad(A, tid);
+  if (!squad.length) return `<p class="sg-empty">${safe(opts.empty || "No players bought yet")}</p>`;
+  const top = squad.reduce((m, p) => (!m || (p.price || 0) > (m.price || 0) ? p : m), null);
+  const groups = catList(s).map(c => ({ c, list: squad.filter(p => p.cat === c.id) })).filter(g => g.list.length);
+  const other = squad.filter(p => !catList(s).some(c => c.id === p.cat));
+  if (other.length) groups.push({ c: { id: "", name: "Other" }, list: other });
+  return `<div class="sgroups">${groups.map(({ c, list }) => `
+    <section class="sg" style="--cc:${catColour(s, c.id)};--ci:${catInk(s, c.id)}">
+      <header><span class="sg-dot"></span><b>${safe(c.name)}</b><span class="sg-meta">${list.length} · ${money(list.reduce((n, p) => n + (p.price || 0), 0), s)}</span></header>
+      <ul>${list.map(p => `<li${p === top && squad.length > 1 ? ' class="top"' : ""}><span class="sg-name">${safe(p.name)}${opts.pos !== false && positionOf(p, s) ? `<small>${safe(positionOf(p, s))}</small>` : ""}</span><span class="sg-price">${p === top && squad.length > 1 ? "⭐ " : ""}${money(p.price, s)}</span></li>`).join("")}</ul>
+    </section>`).join("")}</div>`;
+}
+
 export async function squadCardBlob(A, tid) {
   const s = A.settings || {}, t = (A.teams || {})[tid] || {}, cats = catList(s);
   const squad = teamSquad(A, tid);
@@ -898,11 +916,12 @@ export async function squadCardBlob(A, tid) {
   g.beginPath(); g.roundRect ? g.roundRect(x0, top, x1 - x0, bottom - top, 32) : g.rect(x0, top, x1 - x0, bottom - top); g.fill();
   squad.forEach((p, i) => {
     const y = top + 20 + i * rowH;
-    if (i) { g.fillStyle = "rgba(0,0,0,0.08)"; g.fillRect(x0 + 30, y, x1 - x0 - 60, 2); }
-    const sub = [((schemaFor(s.sport) || { roles: {} }).roles[p.role] || {}).name, (cats.find(cc => cc.id === p.cat) || {}).name].filter(Boolean).join(" · ");
+    if (i && squad[i - 1].cat === p.cat) { g.fillStyle = "rgba(0,0,0,0.08)"; g.fillRect(x0 + 30, y, x1 - x0 - 60, 2); }
+    g.fillStyle = catColour(s, p.cat); g.fillRect(x0 + 14, y + 6, 7, rowH - 12);          // category colour
+    const sub = [(cats.find(cc => cc.id === p.cat) || {}).name, ((schemaFor(s.sport) || { roles: {} }).roles[p.role] || {}).name].filter(Boolean).join(" · ");
     g.fillStyle = "#13262A"; g.font = `700 ${big}px Barlow, sans-serif`;
     g.fillText(String(p.name), x0 + 34, y + rowH * (sub && rowH > 50 ? 0.48 : 0.62), x1 - x0 - 300);
-    if (sub && rowH > 50) { g.fillStyle = "#5B6B6E"; g.font = `600 ${Math.round(big * 0.62)}px Barlow, sans-serif`; g.fillText(sub, x0 + 34, y + rowH * 0.84, x1 - x0 - 300); }
+    if (sub && rowH > 50) { g.fillStyle = catInk(s, p.cat); g.font = `600 ${Math.round(big * 0.62)}px Barlow, sans-serif`; g.fillText(sub, x0 + 34, y + rowH * 0.84, x1 - x0 - 300); }
     g.fillStyle = shade(col, isLight(col) ? -0.45 : 0); g.font = `800 ${Math.round(big * 1.15)}px 'Barlow Condensed', sans-serif`;
     g.textAlign = "right"; g.fillText(money(p.price, s), x1 - 34, y + rowH * 0.66); g.textAlign = "left";
   });
@@ -970,11 +989,12 @@ export async function allSquadsCardBlob(A) {
     g.globalAlpha = 1;
     squad.forEach((p, j) => {
       const ry = y + headH + 12 + j * rowH;
-      if (j) { g.fillStyle = "rgba(0,0,0,0.08)"; g.fillRect(x + 20, ry, colW - 40, 2); }
+      if (j && squad[j - 1].cat === p.cat) { g.fillStyle = "rgba(0,0,0,0.08)"; g.fillRect(x + 20, ry, colW - 40, 2); }
+      g.fillStyle = catColour(s, p.cat); g.fillRect(x + 10, ry + 6, 6, rowH - 12);
       const cat = (cats.find(cc => cc.id === p.cat) || {}).name || "";
       g.fillStyle = "#13262A"; g.font = "700 23px Barlow, sans-serif";
       g.fillText(String(p.name), x + 24, ry + 27, colW - 160);
-      if (cat) { g.fillStyle = "#6B7C80"; g.font = "600 15px Barlow, sans-serif"; g.fillText(cat, x + 24, ry + 46, colW - 160); }
+      if (cat) { g.fillStyle = catInk(s, p.cat); g.font = "700 15px Barlow, sans-serif"; g.fillText(cat, x + 24, ry + 46, colW - 160); }
       g.fillStyle = shade(col, isLight(col) ? -0.45 : 0); g.font = "800 28px 'Barlow Condensed', sans-serif";
       g.textAlign = "right"; g.fillText(money(p.price, s), x + colW - 24, ry + 36); g.textAlign = "left";
     });
@@ -1133,8 +1153,8 @@ export function renderSquadShow(A, crest, opts = {}) {
               <div><h2>${safe(t.name)}</h2>
                 <p>${squad.length} player${squad.length === 1 ? "" : "s"} · spent <b>${money(t.spent || 0, s)}</b> · <b>${money(purseLeftOf(t, s), s)}</b> left</p></div></div>
             ${squad.length ? `<ol class="sq-list ${squad.length > 8 ? "two" : ""}">${squad.map((p, k) => `
-              <li style="animation-delay:${0.15 + k * 0.05}s" class="${p === top && squad.length > 1 ? "top" : ""}">
-                <span><b>${safe(p.name)}</b><small>${safe([positionOf(p, s), (cats.find(c => c.id === p.cat) || {}).name].filter(Boolean).join(" · "))}</small></span>
+              <li style="animation-delay:${0.15 + k * 0.05}s;--cc:${catColour(s, p.cat)}" class="${p === top && squad.length > 1 ? "top" : ""}">
+                <span><b>${safe(p.name)}</b><small><i class="sq-cat">${safe((cats.find(c => c.id === p.cat) || {}).name || "")}</i>${positionOf(p, s) ? " · " + safe(positionOf(p, s)) : ""}</small></span>
                 <em>${p === top && squad.length > 1 ? "⭐ " : ""}${money(p.price, s)}</em></li>`).join("")}</ol>`
               : `<p class="sq-empty">No players bought yet</p>`}
           </div>`;

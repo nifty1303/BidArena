@@ -23,7 +23,7 @@
       catList, catMax, squadLimits, squadText, catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine, purseLeftOf,
       playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
       onDisconnect, watchConnection, cleanName, nameKeyOf, currentUser, isHostAccount, confirmBox,
-      audioReady, showBreak, squadCardBlob, squadCSV, shareOrDownload, allSquadsCardBlob, downloadBlob, fileSafe, downloadCSV, refreshTourLogo, clearTourLogo, renderSquadShow, catIntroHTML, introOn, lotSounds
+      audioReady, showBreak, squadCardBlob, squadCSV, shareOrDownload, allSquadsCardBlob, downloadBlob, fileSafe, squadGroupsHTML, downloadCSV, refreshTourLogo, clearTourLogo, renderSquadShow, catIntroHTML, introOn, lotSounds
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Live auctions");
@@ -513,7 +513,7 @@
                  <p id="needsLine" class="needs-line"></p>`
                : `<div class="team-head" style="--c:var(--accent)"><div class="grow"><h2>${safe(A.title || "Auction")}</h2><p>Watching as <b>${safe(myName())}</b> · <button class="link-btn" id="leaveBtn">Join a team</button></p></div></div>
                   <div id="plot" class="plot" style="margin-top:10px"></div>`}
-          ${t ? `<h3 class="section-title">Your squad</h3><ul id="mySquad" class="mini-squad"></ul>
+          ${t ? `<h3 class="section-title">Your squad</h3><div id="mySquad" class="my-squad"></div>
                  <h3 class="section-title">Unsold players <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:600">· tap ♡ to wishlist (only your team sees it)</span></h3>
                  <ul id="unsoldList" class="mini-squad"></ul>` : ""}
           <h3 class="section-title">All teams</h3>
@@ -853,8 +853,7 @@
         const cats = catList(s);
         const catName = id => (cats.find(c => c.id === id) || { name: "" }).name;
         const mine = players.filter(([, p]) => p.status === "sold" && p.soldTo === myTeam);
-        $("mySquad").innerHTML = mine.map(([, p]) => `<li><span>${safe(p.name)} <span class="muted" style="font-size:13px">${safe(catName(p.cat))}</span></span><b>${money(p.price, s)}</b></li>`).join("")
-          || `<li><span class="muted">No players yet</span><span></span></li>`;
+        $("mySquad").innerHTML = squadGroupsHTML(A, myTeam, { empty: "No players yet" });
         const unsold = players.filter(([, p]) => p.status === "unsold");
         if ($("unsoldList")) $("unsoldList").innerHTML = unsold.map(([id, p]) => `
           <li><span>${safe(p.name)} <span class="muted" style="font-size:13px">${safe(catName(p.cat))}</span>${playerLine(p, s) ? `<br><small class="muted">${safe(playerLine(p, s))}</small>` : ""}</span>
@@ -877,8 +876,7 @@
             <span class="tchev" aria-hidden="true">▾</span>
           </button>
           ${open ? `<div class="team-squad">
-              ${squad.length ? `<ul>${squad.map(([, p]) => `<li><span><b>${safe(p.name)}</b><small>${safe([positionOf(p, s), catName(p.cat)].filter(Boolean).join(" · "))}</small></span><b class="tsq-price">${money(p.price, s)}</b></li>`).join("")}</ul>`
-                : `<p class="muted" style="margin:4px 0">No players bought yet.</p>`}
+              ${squadGroupsHTML(A, id)}
               <div class="tsq-foot"><span>Spent <b>${money(t.spent || 0, s)}</b></span><span>Left <b>${money(purseLeftOf(t, s), s)}</b></span></div>
               <div class="tsq-cats">${cats.map(c => { const n = (t.cat && t.cat[c.id]) || 0; return `<span class="tc ${n >= catMax(c) ? "done" : n < c.min ? "short" : "ok"}" style="--cc:${catColour(s, c.id)}">${safe(c.name)} ${n}/${c.min}${c.max ? "–" + c.max : "+"}</span>`; }).join("")}</div>
             </div>` : ""}
@@ -981,7 +979,7 @@
           const mine = players.filter(([, p]) => p.status === "sold" && p.soldTo === id);
           return `<div class="squad" style="--c:${safe(t.color)}">
             <div class="squad-head">${crest(id, "lg")}<div><h3>${safe(t.name)}${id === myTeam ? " (you)" : ""}</h3><span class="muted">${mine.length} player${mine.length === 1 ? "" : "s"} · spent ${money(t.spent || 0, s)}</span></div></div>
-            <ul>${mine.map(([, p]) => `<li><span>${safe(p.name)}<span class="cat">${safe((catList(s).find(c => c.id === p.cat) || { name: "" }).name)}</span></span><span>${money(p.price, s)}</span></li>`).join("") || `<li><span class="muted">No players</span><span></span></li>`}</ul>
+            ${squadGroupsHTML(A, id, { empty: "No players" })}
             <div class="squad-actions"><button class="btn ${id === myTeam ? "btn-sun" : "btn-light"} btn-sm" data-card="${id}">📤 Share card</button><button class="btn btn-light btn-sm" data-cardget="${id}">⬇ Download card</button><button class="btn btn-light btn-sm" data-sqcsv="${id}">⬇ Spreadsheet</button></div>
           </div>`;
         }).join("")}</div>`;

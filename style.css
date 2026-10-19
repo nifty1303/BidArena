@@ -1185,3 +1185,25 @@ body.display-mode #nextUp { display: none !important; }
 .watch-stats > div { min-width: 120px; padding: 10px 16px; border-radius: 14px; background: rgba(255, 255, 255, 0.9); border: 1px solid var(--line); text-align: center; }
 .watch-stats b { display: block; font-family: var(--display); font-size: 30px; line-height: 1; color: var(--accent); }
 .watch-stats span { font-size: 13px; font-weight: 700; color: var(--muted, #6b7c80); }
+
+/* squads grouped by category */
+.sgroups { display: grid; gap: 10px; padding: 10px 14px 14px; }
+.sg { border-radius: 14px; overflow: hidden; background: #fff; border: 1px solid color-mix(in srgb, var(--cc) 35%, var(--line)); box-shadow: 0 1px 0 rgba(0, 0, 0, 0.03); }
+.sg header { display: flex; align-items: center; gap: 8px; padding: 7px 12px; background: color-mix(in srgb, var(--cc) 16%, #fff); border-bottom: 1px solid color-mix(in srgb, var(--cc) 25%, transparent); }
+.sg-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--cc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cc) 25%, transparent); flex: none; }
+.sg header b { font-family: var(--display); font-size: 15px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ci); }
+.sg-meta { margin-left: auto; font-size: 12px; font-weight: 800; color: var(--ci); opacity: 0.85; white-space: nowrap; }
+.sg ul { list-style: none; margin: 0; padding: 0; }
+.sg li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 12px 8px 14px; border-left: 4px solid var(--cc); border-bottom: 1px solid var(--line); font-size: 15px; }
+.sg li:last-child { border-bottom: none; }
+.sg li.top { background: color-mix(in srgb, #FFC53D 12%, #fff); }
+.sg-name { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.sg-name small { display: block; font-size: 12px; font-weight: 600; color: var(--dim, #6b7c80); }
+.sg-price { font-family: var(--display); font-weight: 800; font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sg-empty { margin: 10px 16px 14px; color: var(--dim, #6b7c80); font-size: 14px; }
+.squad .sgroups { padding: 12px 14px 4px; }
+.team-squad .sgroups, .my-squad .sgroups { padding: 0; }
+.my-squad { margin-bottom: 6px; }
+/* dark showcase list: category colour on each row */
+.sq-list li { border-left-color: var(--cc, var(--c)); }
+.sq-cat { font-style: normal; font-weight: 800; color: var(--cc); filter: brightness(1.25); }

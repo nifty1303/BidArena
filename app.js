@@ -4,7 +4,8 @@
 import { firebaseConfig } from "./config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getDatabase, ref, onValue, get, set, update, push, serverTimestamp, onDisconnect
+  getDatabase, ref, onValue, get, set, update, push, serverTimestamp, onDisconnect,
+  query, orderByChild, startAt, endAt, onChildAdded
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut
@@ -1181,4 +1182,56 @@ export function catIntroHTML(A, live) {
         <p class="ci-facts"><span>${waiting} player${waiting === 1 ? "" : "s"}</span><span>Base ${money(c.base, s)}</span><span>+${money(c.step, s)} a bid</span><span>Each team buys ${c.min}${c.max ? "–" + c.max : "+"}</span></p>
       </div>
     </div>`;
+}
+
+
+// ============================================================
+// Live reactions: viewers and teams tap an emoji, it floats up on every screen
+// ============================================================
+export const REACTIONS = [["fire", "🔥"], ["clap", "👏"], ["wow", "😱"], ["love", "❤️"], ["laugh", "😂"], ["money", "💰"]];
+const reactEmoji = id => (REACTIONS.find(r => r[0] === id) || [, ""])[1];
+let reactTimes = [];
+// Sends one reaction (at most ~2 a second and 8 in 5 seconds per phone, so no one floods the screen)
+export function sendReaction(code, uid, name, e) {
+  const now = Date.now();
+  reactTimes = reactTimes.filter(t => now - t < 5000);
+  if (reactTimes.length >= 8 || (reactTimes.length && now - reactTimes[reactTimes.length - 1] < 450)) return false;
+  reactTimes.push(now);
+  const r = push(ref(db, `auctionReactions/${code}`));
+  set(r, { e, at: serverTimestamp(), uid, ...(name ? { n: cleanName(name).slice(0, 24) } : {}) }).catch(() => {});
+  try { navigator.vibrate && navigator.vibrate(15); } catch (err) {}
+  return true;
+}
+// Calls back for each new reaction from now on; returns a stop function
+export function watchReactions(code, cb) {
+  const q = query(ref(db, `auctionReactions/${code}`), orderByChild("at"), startAt(serverNow() - 3000));
+  return onChildAdded(q, snap => { const v = snap.val(); if (v && reactEmoji(v.e)) cb(v); }, () => {});
+}
+// The control room clears out old reactions now and then
+export async function pruneReactions(code) {
+  try {
+    const old = await get(query(ref(db, `auctionReactions/${code}`), orderByChild("at"), endAt(serverNow() - 60000)));
+    const ch = {};
+    Object.keys(old.val() || {}).forEach(k => { ch[`auctionReactions/${code}/${k}`] = null; });
+    if (Object.keys(ch).length) await update(ref(db), ch);
+  } catch (e) {}
+}
+// One emoji floating up the screen (with the sender's name on big screens)
+export function floatReaction(v, opts = {}) {
+  let layer = document.getElementById("reactLayer");
+  if (!layer) { layer = document.createElement("div"); layer.id = "reactLayer"; layer.className = "react-layer"; document.body.appendChild(layer); }
+  if (layer.childElementCount > (opts.max || 40)) return;
+  const el = document.createElement("div");
+  el.className = "rx" + (opts.big ? " big" : "");
+  const span = opts.span || 26;                                    // how much of the width they use, from the right
+  el.style.left = `${100 - span + Math.random() * (span - 6)}%`;
+  el.style.setProperty("--dx", `${Math.round((Math.random() - 0.5) * 80)}px`);
+  el.style.setProperty("--dur", `${(2.6 + Math.random() * 1.2).toFixed(2)}s`);
+  el.innerHTML = `<span class="rx-e">${reactEmoji(v.e)}</span>${opts.names && v.n ? `<span class="rx-n">${safe(v.n)}</span>` : ""}`;
+  layer.appendChild(el);
+  setTimeout(() => el.remove(), 4200);
+}
+// The row of reaction buttons on phones
+export function reactBarHTML(cls = "") {
+  return `<div class="react-bar ${cls}" role="group" aria-label="React">${REACTIONS.map(([id, e]) => `<button type="button" data-react="${id}" aria-label="${id}">${e}</button>`).join("")}</div>`;
 }

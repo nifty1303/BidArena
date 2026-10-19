@@ -87,7 +87,7 @@
       catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine,
       dialog, alertBox, confirmBox, copyText, teamBudget, purseLeftOf,
       playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
-      mountBidders, watchConnection, ensureGuest, showBreak, squadCardBlob, squadCSV, shareOrDownload, allSquadsCardBlob, downloadBlob, fileSafe, squadGroupsHTML, teamSquad, refreshTourLogo, renderSquadShow, catIntroHTML, introOn, lotSounds
+      mountBidders, watchConnection, ensureGuest, showBreak, squadCardBlob, squadCSV, shareOrDownload, allSquadsCardBlob, downloadBlob, fileSafe, squadGroupsHTML, watchReactions, floatReaction, pruneReactions, teamSquad, refreshTourLogo, renderSquadShow, catIntroHTML, introOn, lotSounds
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction room");
@@ -124,6 +124,10 @@
     // ============================================================
     // Start: host must be signed in and own the auction
     // ============================================================
+    // live reactions from phones float up the right side (with names on the big screens)
+    function startReactions() {
+      watchReactions(code, v => { if (A && A.status === "live") floatReaction(v, { big: true, names: true, span: DISPLAY ? 22 : 18, max: DISPLAY ? 45 : 25 }); });
+    }
     async function start() {
       if (!code) { message(`<h2 class="title">No auction chosen</h2><p class="lead">Open an auction from <a href="host.html">My auctions</a>.</p>`); return; }
       if (DISPLAY) {
@@ -139,6 +143,7 @@
           refreshTourLogo(code, A);
           if (await loadTeamLogos(code, A.teams, logos)) { lastKey = ""; render(); }
         });
+        startReactions();
         return;
       }
       user = await currentUser();
@@ -152,6 +157,8 @@
       $("displayBtn").onclick = () => window.open(`room.html?a=${code}&view=display`, `bidarena-display-${code}`);
       watchBidderRequests();
       watchAudience();
+      startReactions();
+      setInterval(() => { if (A && A.status === "live") pruneReactions(code); }, 45000);
       onValue(aRef(), async snap => {
         A = snap.val();
         if (!A) { message(`<h2 class="title">Auction not found</h2><p class="lead">It may have been deleted.</p>`); return; }

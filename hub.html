@@ -64,6 +64,9 @@
     const teamsSet = f => !isPh(f.home) && !isPh(f.away);
     const otherSide = (f, tid) => tid === f.home ? f.away : f.home;
     const evSide = (f, e) => e.type === "og" ? otherSide(f, e.team) : e.team;     // an own goal sits with the team it counted for
+    // cards are tight: 3+ word names keep only the middle name(s), at most two words
+    const shortName = n => { const w = String(n || "").trim().split(/\s+/); return w.length <= 2 ? w.join(" ") : w.slice(1, -1).slice(0, 2).join(" "); };
+    const ogMini = e => `<i class="og-tag" style="--oc:${safe(team(e.team).color)}" title="Own goal by a ${safe(team(e.team).name)} player">OG</i>`;
     const ogTag = e => `<i class="og-tag" style="--oc:${safe(team(e.team).color)}">OG · ${safe(team(e.team).name)}</i>`;
     // Match officials: editable until the match is marked Full time, then locked
     const OFFICIALS = [["ref", "Referee"], ["l1", "Linesman 1"], ["l2", "Linesman 2"]];
@@ -223,7 +226,7 @@
           const k = (e.type === "yellow" || e.type === "red" || e.type === "og" ? e.type : "g") + ":" + (e.pid || e.n || "?");
           (by[k] = by[k] || { e, mins: [] }).mins.push(e.min ? e.min + "′" + (e.type === "pen" ? " p" : "") : (e.type === "pen" ? "p" : ""));
         });
-        return Object.values(by).map(({ e, mins }) => `<span>${e.type === "yellow" ? "🟨" : e.type === "red" ? "🟥" : "⚽"} ${safe(pname(e.pid, e))}${e.type === "og" ? " " + ogTag(e) : ""}${mins.filter(Boolean).length ? ` <small>${mins.filter(Boolean).join(", ")}</small>` : ""}</span>`).join("");
+        return Object.values(by).map(({ e, mins }) => `<span>${e.type === "yellow" ? "🟨" : e.type === "red" ? "🟥" : "⚽"} <span title="${safe(pname(e.pid, e))}">${safe(shortName(pname(e.pid, e)))}</span>${e.type === "og" ? " " + ogMini(e) : ""}${mins.filter(Boolean).length ? ` <small>${mins.filter(Boolean).join(", ")}</small>` : ""}</span>`).join("");
       };
       return `<div class="mc-ev"><div class="h">${line(f.home)}</div><div class="a">${line(f.away)}</div></div>`;
     }

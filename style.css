@@ -1525,3 +1525,7 @@ body.has-reactdock .wrap { padding-bottom: 90px; }
 .slug-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .slug-row span { font-weight: 700; color: var(--dim); }
 .slug-row .input { flex: 1 1 140px; min-width: 120px; }
+
+/* hub: date headings readable over the photo background */
+.hub-day h3 { display: inline-flex; align-items: center; gap: 8px; margin: 6px 0 10px; padding: 7px 14px; border-radius: 999px; background: var(--ink); color: #fff; font-size: 15px; letter-spacing: 0.08em; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18); }
+.hub-day h3::before { content: "📅"; font-size: 13px; letter-spacing: 0; }

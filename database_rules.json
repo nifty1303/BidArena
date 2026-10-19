@@ -816,13 +816,6 @@
           ".validate": "newData.val() === now && (!data.exists() || (root.child('auctions').child($aid).child('settings').child('reactGap').exists() && now - data.val() >= root.child('auctions').child($aid).child('settings').child('reactGap').val() * 1000) || (!root.child('auctions').child($aid).child('settings').child('reactGap').exists() && now - data.val() >= 1000))"
         }
       }
-    },
-    "hubSlugs": {
-      "$slug": {
-        ".read": "auth != null",
-        ".write": "auth != null && auth.provider !== 'anonymous' && $slug.matches(/^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/) && (!data.exists() || (root.child('auctions').child(data.child('code').val()).child('owner').val() === auth.uid || root.child('auctions').child(data.child('code').val()).child('editors').child(auth.uid).exists())) && (!newData.exists() || (root.child('auctions').child(newData.child('code').val()).child('owner').val() === auth.uid || root.child('auctions').child(newData.child('code').val()).child('editors').child(auth.uid).exists()))",
-        ".validate": "newData.hasChildren(['code', 'at']) && newData.child('code').isString() && newData.child('code').val().matches(/^[A-Z0-9]{6}$/) && newData.child('at').isNumber()"
-      }
     }
   }
 }

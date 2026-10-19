@@ -3,7 +3,6 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <base href="/">
   <title>Tournament hub · BidArena</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -27,11 +26,7 @@
     const $ = id => document.getElementById(id);
     const root = $("hub");
     let code = (new URLSearchParams(location.search).get("a") || "").toUpperCase();
-    // short links: /t/<name> (or ?t=<name>) point at an auction's hub
-    const slugFromUrl = (location.pathname.match(/^\/t\/([a-z0-9-]+)\/?$/i) || [])[1] || new URLSearchParams(location.search).get("t") || "";
-    const SITE = location.origin;
-    const shortLink = () => H().slug ? `${SITE}/t/${H().slug}` : `${SITE}/hub.html?a=${code}`;
-    const slugify = t => String(t || "").toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 30).replace(/-+$/, "");
+    const shortLink = () => `${location.origin}${location.pathname.replace(/[^/]*$/, "")}hub.html?a=${code}`;
     let A = null, user = null, manage = false, matchFilter = "upcoming", openTeam = null;
     const logos = {}, bannerCache = {};
     let bannerKey = null;
@@ -679,7 +674,7 @@
     // ============================================================
     root.addEventListener("click", e => {
       const t = e.target.closest("[data-tab]");
-      if (t) { tab = t.dataset.tab; history.replaceState(null, "", location.pathname + location.search + "#" + tab); render(); scrollTo({ top: Math.min(scrollY, root.querySelector(".hub-tabs").offsetTop - 10), behavior: "smooth" }); return; }
+      if (t) { tab = t.dataset.tab; history.replaceState(null, "", `?a=${code}#${tab}`); render(); scrollTo({ top: Math.min(scrollY, root.querySelector(".hub-tabs").offsetTop - 10), behavior: "smooth" }); return; }
       const fl = e.target.closest("[data-filter]"); if (fl) { matchFilter = fl.dataset.filter; render(); return; }
       const act = e.target.closest("[data-act]");
       if (act) {
@@ -702,9 +697,8 @@
     // ============================================================
     // Start
     // ============================================================
-    // ---------- share: a short, readable link ----------
+    // ---------- share the hub link ----------
     async function shareHub() {
-      const staff = isStaff(), cur = H().slug || "";
       await form("Share the hub", `
         <p class="hint" style="margin-top:0">Anyone with this link sees fixtures, results, the table and stats, live.</p>
         <div class="share-link"><b id="shLink">${safe(shortLink().replace(/^https?:\/\//, ""))}</b><button class="btn btn-sun btn-sm" id="shCopy">Copy</button></div>
@@ -712,34 +706,10 @@
           <a class="btn btn-light btn-sm" id="shWa" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(`${A.title || "Tournament"} · fixtures, results & table: ${shortLink()}`)}">WhatsApp</a>
           ${navigator.share ? `<button class="btn btn-light btn-sm" id="shNative">More…</button>` : ""}
         </div>
-        ${staff ? `<div class="share-slug">
-            <label class="label" for="shSlug">Short name for the link</label>
-            <div class="slug-row"><span>${safe(location.host)}/t/</span><input class="input" id="shSlug" maxlength="30" value="${safe(cur || slugify((A.title || "").split(/\s+/)[0]) || "")}" placeholder="e.g. kafco"><button class="btn btn-dark btn-sm" id="shSave">${cur ? "Change" : "Save"}</button></div>
-            <p class="hint" id="shMsg">Letters, numbers and dashes. The old long link keeps working too.</p></div>` : ""}
         <div class="dlg-actions"><button class="btn btn-light" data-cancel>Close</button></div>`,
         (back, close) => {
-          const msg = (t, bad) => { const m = back.querySelector("#shMsg"); if (m) { m.textContent = t; m.className = "hint" + (bad ? " err" : ""); } };
-          const refresh = () => {
-            back.querySelector("#shLink").textContent = shortLink().replace(/^https?:\/\//, "");
-            back.querySelector("#shWa").href = `https://wa.me/?text=${encodeURIComponent(`${A.title || "Tournament"} · fixtures, results & table: ${shortLink()}`)}`;
-          };
           back.querySelector("#shCopy").onclick = async () => { await copyText(shortLink()); back.querySelector("#shCopy").textContent = "Copied ✓"; };
           back.querySelector("#shNative")?.addEventListener("click", () => navigator.share({ title: A.title || "Tournament hub", url: shortLink() }).catch(() => {}));
-          back.querySelector("#shSlug")?.addEventListener("input", e => { e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""); });
-          back.querySelector("#shSave")?.addEventListener("click", async () => {
-            const slug = back.querySelector("#shSlug").value.replace(/^-+|-+$/g, "");
-            if (!/^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/.test(slug)) return msg("Use 3 to 30 letters, numbers or dashes.", true);
-            if (slug === cur) return msg("That's already your link.");
-            try {
-              const taken = await get(ref(db, `hubSlugs/${slug}`));
-              if (taken.exists() && taken.val().code !== code) return msg(`"${slug}" is taken. Try another.`, true);
-              const ch = { [`hubSlugs/${slug}`]: { code, at: Date.now() }, [`auctions/${code}/hub/slug`]: slug };
-              if (H().slug && H().slug !== slug) ch[`hubSlugs/${H().slug}`] = null;     // free the old name
-              await update(ref(db), ch);
-              msg("Saved. Share the new link above.");
-              setTimeout(refresh, 300);
-            } catch (e) { msg("Couldn't save that name. " + (e.message || ""), true); }
-          });
         });
     }
 
@@ -752,11 +722,6 @@
       document.documentElement.style.setProperty("--hub-hero", srcs[0] ? `url("${srcs[0]}")` : "none");
     }
     async function start() {
-      if (!code && slugFromUrl) {
-        user = (await currentUser()) || (await ensureGuest());
-        try { const s = await get(ref(db, `hubSlugs/${slugFromUrl.toLowerCase()}`)); if (s.exists()) code = s.val().code; } catch (e) {}
-        if (!code) { root.innerHTML = `<div class="card hub-locked"><h1 class="title">Link not found</h1><p class="lead">No tournament uses the name "${safe(slugFromUrl)}". Check the link.</p></div>`; return; }
-      }
       if (!code) { root.innerHTML = `<div class="card hub-locked"><h1 class="title">No tournament chosen</h1><p class="lead">Open the hub from an auction's results.</p></div>`; return; }
       user = (await currentUser()) || (await ensureGuest());
       onValue(ref(db, `auctions/${code}`), async snap => {

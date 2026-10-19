@@ -246,10 +246,10 @@
            <div class="mc-state">${live ? `<span class="hub-live-dot"></span>LIVE` : "Full time"}${done && pensText(f) ? ` · ${safe(pensText(f))}` : ""}</div>`
         : `<div class="mc-time">${f.at ? fmtTime(f.at) : "TBD"}</div><div class="mc-state">${f.at ? fmtShort(f.at) : "Date TBD"}</div>`;
       const side = (id, cls) => `<div class="mc-team ${cls} ${isPh(id) ? "ph" : ""} ${done && win && win !== id ? "lost" : ""} ${done && win === id ? "won" : ""}">${crest(id, opts.big ? "lg" : "")}<span>${safe(team(id).name)}</span></div>`;
-      return `<article class="mc ${live ? "is-live" : ""} ${opts.big ? "big" : ""}" data-match="${f.id}" tabindex="0">
+      return `<article class="mc ${live ? "is-live" : ""} ${opts.big ? "big" : ""} ${opts.mini ? "mini" : ""}" data-match="${f.id}" tabindex="0">
           <div class="mc-top"><span class="mc-stage ${isKO(f.stage) ? "ko" : ""}">${safe(STAGES[f.stage || "league"] || "Match")}${f.round ? ` · Round ${f.round}` : ""}</span>${f.venue ? `<span class="mc-venue">📍 ${safe(f.venue)}</span>` : ""}</div>
           <div class="mc-row">${side(f.home, "home")}<div class="mc-mid">${mid}</div>${side(f.away, "away")}</div>
-          ${cardFoot(f)}
+          ${opts.mini ? "" : cardFoot(f)}
           ${manage ? `<div class="mc-tools">${teamsSet(f) ? "" : `<span class="mc-ph-note">Teams decided later</span>`}<button class="btn btn-sun btn-sm" data-result="${f.id}" ${teamsSet(f) ? "" : "disabled"}>${done ? "Edit result" : live ? "Update live" : "Enter result"}</button><button class="btn btn-light btn-sm" data-edit="${f.id}">Edit</button><button class="icon-btn" data-del="${f.id}" aria-label="Delete match">✕</button></div>` : ""}
         </article>`;
     }
@@ -272,10 +272,12 @@
           ${x ? `<b>${safe(x.name)}</b><span class="hl-team">${crest(x.team, "sm")}${safe(team(x.team).name)}</span><span class="hl-num">${x[k]}<small>${unit}</small></span>` : `<b class="muted">Nobody yet</b>`}</div>`;
       return `
         ${live.length ? `<section class="hub-sec"><h2 class="hub-h"><span class="hub-live-dot"></span> Live now</h2><div class="mc-list">${live.map(f => matchCard(f, { big: true })).join("")}</div></section>` : ""}
-        <div class="hub-grid2">
-          <section class="hub-sec"><h2 class="hub-h">Next up${next.length > 2 ? ` <small class="hub-count">${next.length}</small>` : ""}</h2>${next.length ? `<div class="mc-list scroll">${next.map(f => matchCard(f)).join("")}</div>` : `<p class="muted">No more matches scheduled.</p>`}</section>
-          <section class="hub-sec"><h2 class="hub-h">Latest results${last.length > 2 ? ` <small class="hub-count">${last.length}</small>` : ""}</h2>${last.length ? `<div class="mc-list scroll">${last.map(f => matchCard(f)).join("")}</div>` : `<p class="muted">No results yet.</p>`}</section>
-        </div>
+        ${(() => {
+          // the upcoming matches lead; results sit beside them, smaller (they swap once nothing is left to play)
+          const nextSec = big => `<section class="hub-sec ${big ? "lead-sec" : "side-sec"}"><h2 class="hub-h">Next up${next.length > 2 ? ` <small class="hub-count">${next.length}</small>` : ""}</h2>${next.length ? `<div class="mc-list scroll">${next.map(f => matchCard(f, { mini: !big })).join("")}</div>` : `<p class="muted">No more matches scheduled.</p>`}</section>`;
+          const lastSec = big => `<section class="hub-sec ${big ? "lead-sec" : "side-sec"}"><h2 class="hub-h">Latest results${last.length > 2 ? ` <small class="hub-count">${last.length}</small>` : ""}</h2>${last.length ? `<div class="mc-list scroll">${last.map(f => matchCard(f, { mini: !big })).join("")}</div>` : `<p class="muted">No results yet. Scores appear here as matches finish.</p>`}</section>`;
+          return `<div class="hub-lead">${next.length || !last.length ? nextSec(true) + lastSec(false) : lastSec(true) + nextSec(false)}</div>`;
+        })()}
         <div class="hub-grid2">
           <section class="hub-sec"><h2 class="hub-h">Table <button class="link-btn" data-tab="table">Full table ›</button></h2>${tableHTML(table, true)}</section>
           <section class="hub-sec"><h2 class="hub-h">Leaders <button class="link-btn" data-tab="stats">All stats ›</button></h2>

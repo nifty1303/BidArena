@@ -184,6 +184,7 @@
             <p>${safe(m.sport ? sportName(m.sport) : "Sport not set")} · code <b>${c}</b>${m.createdAt ? ` · created ${new Date(m.createdAt).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })}` : ""}</p>
           </div>
           <a class="btn btn-sun" href="room.html?a=${c}">${m.status === "ended" ? "Results" : "Room ▶"}</a>
+          ${m.status === "ended" ? `<a class="btn btn-dark" href="hub.html?a=${c}" title="Fixtures, results, table and stats">🏆 Hub</a>` : ""}
           <button class="btn btn-light" data-edit="${c}">Set up</button>
           <button class="btn btn-light" data-dup="${c}" title="Make a copy to reuse teams, players and rules">⧉ Duplicate</button>
           ${m.role === "editor" ? `<button class="icon-btn" data-leave="${c}" title="Leave this shared auction" aria-label="Leave shared auction">⎋</button>`

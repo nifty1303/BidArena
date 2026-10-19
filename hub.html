@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tournament hub · BidArena</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700;800&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-sport="football" class="hub-page">
+  <main class="wrap hub-wrap">
+    <div class="topbar"><span id="brandSlot"></span><span class="row" style="gap:8px" id="topActions"></span></div>
+    <section id="hub"><div class="card" style="padding:28px;text-align:center"><p class="lead">Loading the tournament…</p></div></section>
+  </main>
+
+  <script type="module">
+    import {
+      db, ref, onValue, update, set, currentUser, ensureGuest, isHostAccount, signInHost,
+      safe, crestHTML, loadTeamLogos, logoOf, brandHTML, refreshTourLogo, squadGroupsHTML, catList, catColour, catInk,
+      positionOf, confirmBox, alertBox, applySportTheme, setPageBackground, loadBanners, newId, money
+    } from "./app.js";
+
+    document.getElementById("brandSlot").innerHTML = brandHTML("Tournament hub");
+    const $ = id => document.getElementById(id);
+    const root = $("hub");
+    const code = (new URLSearchParams(location.search).get("a") || "").toUpperCase();
+    let A = null, user = null, manage = false, matchFilter = "upcoming", openTeam = null;
+    const logos = {}, bannerCache = {};
+    let bannerKey = null;
+    const TABS = [["home", "Overview"], ["matches", "Matches"], ["table", "Table"], ["stats", "Stats"], ["teams", "Teams"]];
+    let tab = TABS.some(t => t[0] === location.hash.slice(1)) ? location.hash.slice(1) : "home";
+
+    const STAGES = { league: "League", group: "Group stage", qf: "Quarter-final", sf: "Semi-final", third: "Third place", final: "Final", friendly: "Friendly" };
+    const isKO = st => ["qf", "sf", "third", "final"].includes(st);
+
+    // ---------- data ----------
+    const H = () => (A && A.hub) || {};
+    const HS = () => ({ win: 3, draw: 1, loss: 0, qualify: 0, ...(H().settings || {}) });
+    const teams = () => Object.entries((A && A.teams) || {});
+    const team = id => ((A && A.teams) || {})[id] || { name: "TBD", color: "#8895A0" };
+    const crest = (id, size = "") => crestHTML(team(id), logoOf(logos, id), size);
+    const fixtures = () => Object.entries(H().fixtures || {})
+      .map(([id, f]) => ({ id, ...f }))
+      .sort((a, b) => (a.at || 9e15) - (b.at || 9e15) || (a.round || 0) - (b.round || 0) || (a.order || 0) - (b.order || 0));
+    const squadIds = tid => Object.entries((A && A.players) || {}).filter(([, p]) => p.status === "sold" && p.soldTo === tid)
+      .sort((a, b) => catList(A.settings).findIndex(c => c.id === a[1].cat) - catList(A.settings).findIndex(c => c.id === b[1].cat) || String(a[1].name).localeCompare(String(b[1].name)));
+    const pname = (pid, ev) => (pid && A.players && A.players[pid] ? A.players[pid].name : (ev && ev.n) || "Unknown");
+    const evList = f => Object.entries(f.events || {}).map(([id, e]) => ({ id, ...e })).sort((a, b) => (a.min || 0) - (b.min || 0) || (a.at || 0) - (b.at || 0));
+    function scoreOf(f) {
+      let h = 0, a = 0;
+      evList(f).forEach(e => {
+        if (e.type === "goal" || e.type === "pen") { if (e.team === f.home) h++; else if (e.team === f.away) a++; }
+        if (e.type === "og") { if (e.team === f.home) a++; else if (e.team === f.away) h++; }   // an own goal counts for the other side
+      });
+      return { h, a };
+    }
+    const played = f => f.status === "done";
+    const hasScore = f => f.status === "done" || f.status === "live";
+    function winnerOf(f) {
+      if (!played(f)) return null;
+      const { h, a } = scoreOf(f);
+      if (h !== a) return h > a ? f.home : f.away;
+      if (f.pens && f.pens.h != null && f.pens.a != null && f.pens.h !== f.pens.a) return f.pens.h > f.pens.a ? f.home : f.away;
+      return null;
+    }
+
+    function standings() {
+      const P = HS(), rows = {};
+      teams().forEach(([id]) => { rows[id] = { id, p: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, pts: 0, form: [] }; });
+      fixtures().filter(f => played(f) && (f.stage || "league") === "league" && rows[f.home] && rows[f.away]).forEach(f => {
+        const { h, a } = scoreOf(f), H_ = rows[f.home], W = rows[f.away];
+        H_.p++; W.p++; H_.gf += h; H_.ga += a; W.gf += a; W.ga += h;
+        if (h > a) { H_.w++; W.l++; H_.pts += P.win; W.pts += P.loss; H_.form.push("W"); W.form.push("L"); }
+        else if (h < a) { W.w++; H_.l++; W.pts += P.win; H_.pts += P.loss; W.form.push("W"); H_.form.push("L"); }
+        else { H_.d++; W.d++; H_.pts += P.draw; W.pts += P.draw; H_.form.push("D"); W.form.push("D"); }
+      });
+      return Object.values(rows).sort((x, y) => y.pts - x.pts || (y.gf - y.ga) - (x.gf - x.ga) || y.gf - x.gf || String(team(x.id).name).localeCompare(team(y.id).name));
+    }
+
+    function playerStats() {
+      const S = {};
+      const get = (pid, ev) => { const k = pid || "n:" + (ev.n || "?") + ":" + ev.team; return S[k] || (S[k] = { key: k, pid, name: pname(pid, ev), team: pid && A.players[pid] ? A.players[pid].soldTo || ev.team : ev.team, goals: 0, assists: 0, yellow: 0, red: 0, motm: 0, apps: 0 }); };
+      fixtures().filter(hasScore).forEach(f => {
+        evList(f).forEach(e => {
+          if ((e.type === "goal" || e.type === "pen") && (e.pid || e.n)) get(e.pid, e).goals++;
+          if ((e.type === "goal" || e.type === "pen") && e.assist) get(e.assist, { team: e.team }).assists++;
+          if (e.type === "yellow" && (e.pid || e.n)) get(e.pid, e).yellow++;
+          if (e.type === "red" && (e.pid || e.n)) get(e.pid, e).red++;
+        });
+        if (played(f) && f.motm) get(f.motm, { team: (A.players[f.motm] || {}).soldTo }).motm++;
+      });
+      return Object.values(S);
+    }
+
+    // ---------- time ----------
+    const fmtDay = ms => new Date(ms).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+    const fmtShort = ms => new Date(ms).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+    const fmtTime = ms => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const dayKey = ms => { const d = new Date(ms); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; };
+    function when(ms) {
+      if (!ms) return "Date to be decided";
+      const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+      const days = Math.round((new Date(ms).setHours(0, 0, 0, 0) - d0) / 864e5);
+      const day = days === 0 ? "Today" : days === 1 ? "Tomorrow" : days === -1 ? "Yesterday" : fmtShort(ms);
+      return `${day} · ${fmtTime(ms)}`;
+    }
+    const toInput = ms => ms ? new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "";
+    const fromInput = v => v ? new Date(v).getTime() : 0;
+
+    // ---------- writing ----------
+    const fRef = id => ref(db, `auctions/${code}/hub/fixtures/${id}`);
+    const save = (id, patch) => update(fRef(id), patch).catch(e => alertBox("Couldn't save", e.message || String(e), "⚠️"));
+    const isStaff = () => !!(user && isHostAccount(user) && A && (A.owner === user.uid || (A.editors || {})[user.uid]));
+
+    // ============================================================
+    // Page
+    // ============================================================
+    function render() {
+      if (!A) return;
+      if (A.status !== "ended") return renderLocked();
+      document.title = `${A.title || "Tournament"} · Tournament hub`;
+      const live = fixtures().filter(f => f.status === "live");
+      const P = fixtures().filter(played).length, N = fixtures().length;
+      const prevScroll = scrollY;
+      root.innerHTML = `
+        <header class="hub-hero">
+          <div class="hub-hero-in">
+            <span class="tour-logo hub-logo" data-tour-logo hidden></span>
+            <div class="hub-hero-txt">
+              <p class="hub-eyebrow">${live.length ? `<span class="hub-live-dot"></span> ${live.length} match${live.length > 1 ? "es" : ""} live now` : "Tournament hub"}</p>
+              <h1>${safe(A.title || "Tournament")}</h1>
+              <p class="hub-sub">${teams().length} teams · ${N ? `${P}/${N} matches played` : "Fixtures coming soon"}</p>
+            </div>
+          </div>
+          <nav class="hub-tabs" role="tablist">${TABS.map(([id, label]) => `<button type="button" role="tab" class="${tab === id ? "on" : ""}" data-tab="${id}" aria-selected="${tab === id}">${label}</button>`).join("")}</nav>
+        </header>
+        ${isStaff() ? `<div class="hub-manage-bar ${manage ? "on" : ""}">
+            <label class="hub-switch"><input type="checkbox" id="manageTgl" ${manage ? "checked" : ""}><span></span> Manage mode</label>
+            ${manage ? `<div class="row" style="gap:8px;flex-wrap:wrap">
+                <button class="btn btn-sun btn-sm" data-act="add">＋ Add match</button>
+                <button class="btn btn-light btn-sm" data-act="gen">⚡ Generate fixtures</button>
+                <button class="btn btn-light btn-sm" data-act="settings">⚙ Points & table</button></div>`
+              : `<span class="muted" style="font-size:13px">Turn on to add matches and enter results. Everyone else sees updates instantly.</span>`}
+          </div>` : ""}
+        <div id="hubBody" class="hub-body">${body()}</div>`;
+      scrollTo(0, prevScroll);
+      if (!isStaff()) $("topActions").innerHTML = user && isHostAccount(user) ? "" : `<button class="link-btn" id="orgIn" style="font-size:13px">Organiser? Sign in</button>`;
+      else $("topActions").innerHTML = `<a class="btn btn-light btn-sm" href="room.html?a=${code}">Auction results</a>`;
+      $("orgIn") && ($("orgIn").onclick = async () => { try { user = await signInHost(); render(); } catch (e) {} });
+    }
+
+    function renderLocked() {
+      root.innerHTML = `<div class="card hub-locked">
+          <span class="tour-logo showcase-logo" data-tour-logo hidden></span>
+          <div class="hub-lock-ico">🏆</div>
+          <h1 class="title" style="font-size:clamp(30px,5vw,46px)">Tournament hub <span>opens soon</span></h1>
+          <p class="lead">${safe(A.title || "This tournament")}'s hub opens once the player auction is finished, so every squad is final.</p>
+          <div class="row" style="justify-content:center;gap:10px;margin-top:16px">
+            ${A.status === "live" ? `<a class="btn btn-sun" href="index.html?a=${code}">Watch the auction live ▶</a>` : ""}
+            ${isStaff() ? `<a class="btn btn-light" href="room.html?a=${code}">Open control room</a>` : ""}
+          </div></div>`;
+    }
+
+    function body() {
+      if (tab === "matches") return matchesTab();
+      if (tab === "table") return tableTab();
+      if (tab === "stats") return statsTab();
+      if (tab === "teams") return teamsTab();
+      return homeTab();
+    }
+
+    // ---------- match card ----------
+    function matchCard(f, opts = {}) {
+      const s = scoreOf(f), live = f.status === "live", done = played(f), win = winnerOf(f);
+      const mid = hasScore(f)
+        ? `<div class="mc-score ${live ? "live" : ""}"><b>${s.h}</b><i>–</i><b>${s.a}</b></div>
+           <div class="mc-state">${live ? `<span class="hub-live-dot"></span>LIVE` : "Full time"}${done && f.pens && f.pens.h != null && s.h === s.a ? ` · pens ${f.pens.h}–${f.pens.a}` : ""}</div>`
+        : `<div class="mc-time">${f.at ? fmtTime(f.at) : "TBD"}</div><div class="mc-state">${f.at ? fmtShort(f.at) : "Date TBD"}</div>`;
+      const side = (id, cls) => `<div class="mc-team ${cls} ${done && win && win !== id ? "lost" : ""} ${done && win === id ? "won" : ""}">${crest(id, opts.big ? "lg" : "")}<span>${safe(team(id).name)}</span></div>`;
+      return `<article class="mc ${live ? "is-live" : ""} ${opts.big ? "big" : ""}" data-match="${f.id}" tabindex="0">
+          <div class="mc-top"><span class="mc-stage ${isKO(f.stage) ? "ko" : ""}">${safe(STAGES[f.stage || "league"] || "Match")}${f.round ? ` · Round ${f.round}` : ""}</span>${f.venue ? `<span class="mc-venue">📍 ${safe(f.venue)}</span>` : ""}</div>
+          <div class="mc-row">${side(f.home, "home")}<div class="mc-mid">${mid}</div>${side(f.away, "away")}</div>
+          ${manage ? `<div class="mc-tools"><button class="btn btn-sun btn-sm" data-result="${f.id}">${done ? "Edit result" : live ? "Update live" : "Enter result"}</button><button class="btn btn-light btn-sm" data-edit="${f.id}">Edit</button><button class="icon-btn" data-del="${f.id}" aria-label="Delete match">✕</button></div>` : ""}
+        </article>`;
+    }
+
+    const empty = (icon, title, text, cta = "") => `<div class="hub-empty"><div>${icon}</div><h3>${title}</h3><p>${text}</p>${cta}</div>`;
+    const noFixturesCTA = () => isStaff() ? `<button class="btn btn-sun" data-act="${manage ? "gen" : "manage-gen"}">⚡ Generate fixtures</button>` : "";
+
+    // ---------- Overview ----------
+    function homeTab() {
+      const F = fixtures();
+      if (!F.length) return empty("📅", "No fixtures yet", isStaff() ? "Create the full league schedule in one click, or add matches one by one in Manage mode." : "The organiser hasn't published the fixtures yet. Check back soon.", noFixturesCTA());
+      const live = F.filter(f => f.status === "live");
+      const next = F.filter(f => f.status !== "done" && f.status !== "live").slice(0, 3);
+      const last = F.filter(played).sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 3);
+      const table = standings().slice(0, 5), st = playerStats();
+      const lead = (arr, k) => arr.filter(x => x[k] > 0).sort((a, b) => b[k] - a[k] || b.goals - a.goals)[0];
+      const top = lead(st, "goals"), ast = lead(st, "assists"), mvp = lead(st, "motm");
+      const leaderCard = (icon, label, x, k, unit) => `<div class="hub-leader" ${x ? `style="--c:${safe(team(x.team).color)}"` : ""}>
+          <span class="hl-ico">${icon}</span><span class="hl-label">${label}</span>
+          ${x ? `<b>${safe(x.name)}</b><span class="hl-team">${crest(x.team, "sm")}${safe(team(x.team).name)}</span><span class="hl-num">${x[k]}<small>${unit}</small></span>` : `<b class="muted">Nobody yet</b>`}</div>`;
+      return `
+        ${live.length ? `<section class="hub-sec"><h2 class="hub-h"><span class="hub-live-dot"></span> Live now</h2><div class="mc-list">${live.map(f => matchCard(f, { big: true })).join("")}</div></section>` : ""}
+        <div class="hub-grid2">
+          <section class="hub-sec"><h2 class="hub-h">Next up</h2>${next.length ? `<div class="mc-list">${next.map(f => matchCard(f)).join("")}</div>` : `<p class="muted">No more matches scheduled.</p>`}</section>
+          <section class="hub-sec"><h2 class="hub-h">Latest results</h2>${last.length ? `<div class="mc-list">${last.map(f => matchCard(f)).join("")}</div>` : `<p class="muted">No results yet.</p>`}</section>
+        </div>
+        <div class="hub-grid2">
+          <section class="hub-sec"><h2 class="hub-h">Table <button class="link-btn" data-tab="table">Full table ›</button></h2>${tableHTML(table, true)}</section>
+          <section class="hub-sec"><h2 class="hub-h">Leaders <button class="link-btn" data-tab="stats">All stats ›</button></h2>
+            <div class="hub-leaders">${leaderCard("⚽", "Top scorer", top, "goals", " goals")}${leaderCard("🎯", "Most assists", ast, "assists", " assists")}${leaderCard("⭐", "Player of the match", mvp, "motm", " awards")}</div></section>
+        </div>`;
+    }
+
+    // ---------- Matches ----------
+    function matchesTab() {
+      const F = fixtures();
+      if (!F.length) return empty("📅", "No fixtures yet", isStaff() ? "Generate a full schedule or add matches in Manage mode." : "Fixtures will appear here as soon as they're published.", noFixturesCTA());
+      const list = matchFilter === "results" ? F.filter(hasScore).sort((a, b) => (b.at || 0) - (a.at || 0))
+        : matchFilter === "upcoming" ? F.filter(f => !played(f)) : F;
+      const groups = [];
+      list.forEach(f => { const k = f.at ? dayKey(f.at) : "tbd"; let g = groups.find(x => x.k === k); if (!g) groups.push(g = { k, at: f.at, items: [] }); g.items.push(f); });
+      const counts = { upcoming: F.filter(f => !played(f)).length, results: F.filter(hasScore).length, all: F.length };
+      return `<div class="hub-seg">${[["upcoming", "Upcoming"], ["results", "Results"], ["all", "All"]].map(([k, l]) => `<button type="button" class="${matchFilter === k ? "on" : ""}" data-filter="${k}">${l} <small>${counts[k]}</small></button>`).join("")}</div>
+        ${groups.length ? groups.map(g => `<section class="hub-day"><h3>${g.at ? fmtDay(g.at) : "Date to be decided"}</h3><div class="mc-list">${g.items.map(f => matchCard(f)).join("")}</div></section>`).join("")
+          : `<p class="muted" style="text-align:center;margin:30px 0">${matchFilter === "results" ? "No results yet." : "Nothing left to play. What a season!"}</p>`}`;
+    }
+
+    // ---------- Table ----------
+    function tableHTML(rows, mini = false) {
+      const q = +HS().qualify || 0;
+      return `<div class="hub-table-wrap"><table class="hub-table ${mini ? "mini" : ""}">
+        <thead><tr><th>#</th><th class="tl">Team</th><th>P</th>${mini ? "" : `<th>W</th><th>D</th><th>L</th><th class="hide-sm">GF</th><th class="hide-sm">GA</th>`}<th>GD</th><th>Pts</th>${mini ? "" : `<th class="hide-sm tl">Form</th>`}</tr></thead>
+        <tbody>${rows.map((r, i) => `<tr class="${q && i < q ? "q" : ""}" style="--c:${safe(team(r.id).color)}">
+          <td class="pos">${i + 1}</td>
+          <td class="tl"><span class="tt">${crest(r.id, "sm")}<b>${safe(team(r.id).name)}</b></span></td>
+          <td>${r.p}</td>${mini ? "" : `<td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td class="hide-sm">${r.gf}</td><td class="hide-sm">${r.ga}</td>`}
+          <td>${r.gf - r.ga > 0 ? "+" : ""}${r.gf - r.ga}</td><td class="pts">${r.pts}</td>
+          ${mini ? "" : `<td class="hide-sm tl"><span class="form">${r.form.slice(-5).map(x => `<i class="${x}">${x}</i>`).join("") || "<small class='muted'>–</small>"}</span></td>`}</tr>`).join("")}</tbody></table></div>`;
+    }
+    function tableTab() {
+      const P = HS(), q = +P.qualify || 0;
+      const ko = fixtures().filter(f => isKO(f.stage));
+      return `<section class="hub-sec">${tableHTML(standings())}
+          <p class="hub-note">Win ${P.win} · Draw ${P.draw} · Loss ${P.loss} pts. Ties split by goal difference, then goals scored.${q ? ` <span class="q-key"></span> Top ${q} qualify.` : ""} League matches only.</p></section>
+        ${ko.length ? `<section class="hub-sec"><h2 class="hub-h">Knockouts</h2><div class="mc-list">${ko.map(f => matchCard(f)).join("")}</div></section>` : ""}`;
+    }
+
+    // ---------- Stats ----------
+    function board(title, icon, rows, k, unit, extra = () => "") {
+      return `<section class="hub-board"><h3><span>${icon}</span>${title}</h3>
+        ${rows.length ? `<ol>${rows.slice(0, 10).map((x, i) => `<li class="${i === 0 ? "first" : ""}" style="--c:${safe(team(x.team).color)}"><span class="rk">${i + 1}</span>${crest(x.team, "sm")}<span class="nm"><b>${safe(x.name)}</b><small>${safe(team(x.team).name)}${extra(x)}</small></span><span class="vl">${typeof k === "function" ? k(x) : x[k]}<small>${unit}</small></span></li>`).join("")}</ol>`
+          : `<p class="muted" style="margin:6px 0 2px">Nothing yet</p>`}</section>`;
+    }
+    function statsTab() {
+      const st = playerStats();
+      const by = k => st.filter(x => x[k] > 0).sort((a, b) => b[k] - a[k] || b.goals - a.goals || String(a.name).localeCompare(b.name));
+      const disc = st.filter(x => x.yellow || x.red).sort((a, b) => (b.red * 3 + b.yellow) - (a.red * 3 + a.yellow));
+      const T = standings().map(r => {
+        const cs = fixtures().filter(f => played(f) && (f.home === r.id || f.away === r.id)).filter(f => { const s = scoreOf(f); return f.home === r.id ? s.a === 0 : s.h === 0; }).length;
+        const all = fixtures().filter(f => played(f) && (f.home === r.id || f.away === r.id));
+        const gf = all.reduce((n, f) => n + (f.home === r.id ? scoreOf(f).h : scoreOf(f).a), 0), ga = all.reduce((n, f) => n + (f.home === r.id ? scoreOf(f).a : scoreOf(f).h), 0);
+        return { id: r.id, n: all.length, gf, ga, cs };
+      });
+      return `<div class="hub-boards">
+          ${board("Top scorers", "⚽", by("goals"), "goals", "", x => x.assists ? ` · ${x.assists} ast` : "")}
+          ${board("Assists", "🎯", by("assists"), "assists", "")}
+          ${board("Player of the match", "⭐", by("motm"), "motm", "")}
+          ${board("Discipline", "🟨", disc, x => `${x.yellow ? `<i class="cardc y">${x.yellow}</i>` : ""}${x.red ? `<i class="cardc r">${x.red}</i>` : ""}`, "")}
+        </div>
+        <section class="hub-sec"><h2 class="hub-h">Team stats</h2>
+          <div class="hub-table-wrap"><table class="hub-table"><thead><tr><th class="tl">Team</th><th>Played</th><th>Scored</th><th>Conceded</th><th>Clean sheets</th></tr></thead>
+          <tbody>${T.map(r => `<tr style="--c:${safe(team(r.id).color)}"><td class="tl"><span class="tt">${crest(r.id, "sm")}<b>${safe(team(r.id).name)}</b></span></td><td>${r.n}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.cs}</td></tr>`).join("")}</tbody></table></div></section>`;
+    }
+
+    // ---------- Teams ----------
+    function teamsTab() {
+      const rows = standings(), st = playerStats(), s = A.settings || {};
+      return `<div class="hub-teams">${teams().map(([id, t]) => {
+        const r = rows.find(x => x.id === id) || { p: 0, w: 0, d: 0, l: 0, pts: 0 }, pos = rows.findIndex(x => x.id === id) + 1;
+        const best = st.filter(x => x.team === id && x.goals).sort((a, b) => b.goals - a.goals)[0];
+        const n = squadIds(id).length, open = openTeam === id;
+        return `<article class="hub-team ${open ? "open" : ""}" style="--c:${safe(t.color)}">
+          <button type="button" class="ht-head" data-team="${id}" aria-expanded="${open}">
+            ${crest(id, "lg")}
+            <div class="grow"><h3>${safe(t.name)}</h3><p>${n} players · ${r.p ? `${r.w}W ${r.d}D ${r.l}L · ${r.pts} pts · ${ordinal(pos)}` : "No matches yet"}</p>${best ? `<p class="ht-star">⚽ ${safe(best.name)} · ${best.goals} goal${best.goals > 1 ? "s" : ""}</p>` : ""}</div>
+            <span class="tchev" aria-hidden="true">▾</span>
+          </button>
+          ${open ? `<div class="ht-squad">${squadGroupsHTML(A, id, { empty: "No players" })}<p class="ht-foot">Spent ${money(t.spent || 0, s)} at the auction</p></div>` : ""}
+        </article>`;
+      }).join("")}</div>`;
+    }
+    const ordinal = n => n + (["th", "st", "nd", "rd"][((n % 100) - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
+
+    // ============================================================
+    // Match details (everyone)
+    // ============================================================
+    const evIcon = t => ({ goal: "⚽", pen: "⚽", og: "⚽", yellow: "🟨", red: "🟥" }[t] || "•");
+    function eventLine(f, e) {
+      const extra = e.type === "pen" ? " (pen)" : e.type === "og" ? " (own goal)" : "";
+      return `<li class="ev ${e.team === f.home ? "h" : "a"} ${e.type}"><span class="ev-min">${e.min ? e.min + "′" : ""}</span><span class="ev-ico">${evIcon(e.type)}</span>
+        <span class="ev-txt"><b>${safe(pname(e.pid, e))}</b>${extra}${e.assist ? `<small>assist ${safe(pname(e.assist))}</small>` : ""}</span></li>`;
+    }
+    function openMatch(id) {
+      const f = fixtures().find(x => x.id === id);
+      if (!f) return;
+      const back = document.createElement("div");
+      back.className = "modal-back";
+      const draw = () => {
+        const g = fixtures().find(x => x.id === id);
+        if (!g) { back.remove(); return; }
+        const s = scoreOf(g), ev = evList(g);
+        back.innerHTML = `<section class="card modal hub-match" style="--hc:${safe(team(g.home).color)};--ac:${safe(team(g.away).color)}">
+          <button class="icon-btn modal-x" aria-label="Close">✕</button>
+          <p class="hm-meta">${safe(STAGES[g.stage || "league"] || "Match")}${g.round ? ` · Round ${g.round}` : ""}${g.at ? ` · ${fmtDay(g.at)}, ${fmtTime(g.at)}` : ""}${g.venue ? ` · ${safe(g.venue)}` : ""}</p>
+          <div class="hm-board">
+            <div class="hm-team">${crest(g.home, "xl")}<b>${safe(team(g.home).name)}</b></div>
+            <div class="hm-score">${hasScore(g) ? `<span>${s.h}</span><i>–</i><span>${s.a}</span>` : `<em>${g.at ? fmtTime(g.at) : "TBD"}</em>`}
+              <small>${g.status === "live" ? `<span class="hub-live-dot"></span> LIVE` : played(g) ? "Full time" : "Upcoming"}${played(g) && g.pens && g.pens.h != null && s.h === s.a ? ` · ${g.pens.h}–${g.pens.a} on pens` : ""}</small></div>
+            <div class="hm-team">${crest(g.away, "xl")}<b>${safe(team(g.away).name)}</b></div>
+          </div>
+          ${ev.length ? `<ul class="hm-events">${ev.map(e => eventLine(g, e)).join("")}</ul>` : hasScore(g) ? `<p class="muted" style="text-align:center">No goals or cards recorded.</p>` : ""}
+          ${g.motm ? `<div class="hm-motm">⭐ Player of the match <b>${safe(pname(g.motm))}</b> <span>${safe(team((A.players[g.motm] || {}).soldTo).name)}</span></div>` : ""}
+          ${g.note ? `<p class="hm-note">${safe(g.note)}</p>` : ""}
+          ${isStaff() ? `<div class="row" style="justify-content:center;gap:8px;margin-top:14px"><button class="btn btn-sun btn-sm" data-result="${g.id}">${played(g) ? "Edit result" : "Enter result"}</button><button class="btn btn-light btn-sm" data-edit="${g.id}">Edit match</button></div>` : ""}
+        </section>`;
+      };
+      draw();
+      back._redraw = draw;
+      back.classList.add("hub-live-modal");
+      document.body.appendChild(back);
+      back.addEventListener("click", e => {
+        if (e.target === back || e.target.closest(".modal-x")) return back.remove();
+        const r = e.target.closest("[data-result]"), ed = e.target.closest("[data-edit]");
+        if (r) { back.remove(); openResult(r.dataset.result); }
+        if (ed) { back.remove(); editMatch(ed.dataset.edit); }
+      });
+    }
+
+    // ============================================================
+    // Manage: add / edit a match
+    // ============================================================
+    function form(title, html, onMount) {
+      return new Promise(resolve => {
+        const back = document.createElement("div");
+        back.className = "modal-back";
+        back.innerHTML = `<section class="card modal hub-form"><button class="icon-btn modal-x" aria-label="Close">✕</button><h2 class="title" style="font-size:30px">${title}</h2>${html}</section>`;
+        document.body.appendChild(back);
+        const close = v => { back.remove(); resolve(v); };
+        back.addEventListener("click", e => { if (e.target === back || e.target.closest(".modal-x") || e.target.closest("[data-cancel]")) close(null); });
+        onMount(back, close);
+      });
+    }
+    const teamOpts = sel => teams().map(([id, t]) => `<option value="${id}" ${id === sel ? "selected" : ""}>${safe(t.name)}</option>`).join("");
+    const stageOpts = sel => Object.entries(STAGES).map(([k, l]) => `<option value="${k}" ${k === (sel || "league") ? "selected" : ""}>${l}</option>`).join("");
+
+    async function editMatch(id) {
+      const f = id ? fixtures().find(x => x.id === id) : null;
+      if (teams().length < 2) return alertBox("Not enough teams", "You need at least two teams.");
+      const T = teams();
+      await form(f ? "Edit match" : "Add a match", `
+        <div class="hub-fgrid">
+          <label>Home team<select class="select" id="mHome">${teamOpts(f ? f.home : T[0][0])}</select></label>
+          <label>Away team<select class="select" id="mAway">${teamOpts(f ? f.away : T[1][0])}</select></label>
+          <label>Date & time<input class="input" type="datetime-local" id="mAt" value="${toInput(f && f.at)}"></label>
+          <label>Venue<input class="input" id="mVenue" maxlength="60" placeholder="e.g. KAFCO Ground" value="${safe((f && f.venue) || (fixtures().find(x => x.venue) || {}).venue || "")}"></label>
+          <label>Stage<select class="select" id="mStage">${stageOpts(f && f.stage)}</select></label>
+          <label>Round <small class="muted">(optional)</small><input class="input" type="number" min="1" id="mRound" value="${(f && f.round) || ""}"></label>
+          <label class="full">Note <small class="muted">(optional, shown to everyone)</small><input class="input" id="mNote" maxlength="120" value="${safe((f && f.note) || "")}" placeholder="e.g. Kick-off moved due to rain"></label>
+        </div>
+        <p class="err" id="mErr"></p>
+        <div class="dlg-actions"><button class="btn btn-light" data-cancel>Cancel</button><button class="btn btn-sun" id="mSave">${f ? "Save changes" : "Add match"}</button></div>`,
+        (back, close) => {
+          back.querySelector("#mSave").onclick = async () => {
+            const home = back.querySelector("#mHome").value, away = back.querySelector("#mAway").value;
+            if (home === away) { back.querySelector("#mErr").textContent = "Pick two different teams."; return; }
+            const data = { home, away, at: fromInput(back.querySelector("#mAt").value), venue: back.querySelector("#mVenue").value.trim().slice(0, 60),
+              stage: back.querySelector("#mStage").value, round: +back.querySelector("#mRound").value || null, note: back.querySelector("#mNote").value.trim().slice(0, 120) || null };
+            if (f) await save(f.id, data);
+            else await set(fRef(newId()), { ...data, status: "scheduled", order: Date.now() });
+            close(true);
+          };
+        });
+    }
+
+    // Round robin (circle method): every team plays every other team once (or twice)
+    async function generate() {
+      const T = teams().map(([id]) => id);
+      if (T.length < 2) return alertBox("Not enough teams", "You need at least two teams.");
+      const existing = fixtures().filter(f => (f.stage || "league") === "league");
+      const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(16, 0, 0, 0);
+      await form("Generate fixtures", `
+        <p class="hint">Creates a league where every team plays every other team. You can edit any match afterwards.</p>
+        <div class="hub-fgrid">
+          <label>Format<select class="select" id="gLegs"><option value="1">Single round (play each team once)</option><option value="2">Home & away (play each team twice)</option></select></label>
+          <label>First match<input class="input" type="datetime-local" id="gStart" value="${toInput(d.getTime())}"></label>
+          <label>Days between rounds<input class="input" type="number" min="0" id="gGap" value="1"></label>
+          <label>Minutes between matches on the same day<input class="input" type="number" min="0" id="gSlot" value="60"></label>
+          <label class="full">Venue<input class="input" id="gVenue" maxlength="60" placeholder="e.g. KAFCO Ground"></label>
+        </div>
+        <p class="hint" id="gInfo"></p>
+        ${existing.length ? `<label class="hub-check"><input type="checkbox" id="gReplace" checked> Replace the ${existing.filter(f => !hasScore(f)).length} unplayed league matches already scheduled (results are kept)</label>` : ""}
+        <div class="dlg-actions"><button class="btn btn-light" data-cancel>Cancel</button><button class="btn btn-sun" id="gGo">Create fixtures</button></div>`,
+        (back, close) => {
+          const info = () => { const legs = +back.querySelector("#gLegs").value, n = T.length + (T.length % 2); back.querySelector("#gInfo").textContent = `${T.length} teams → ${(T.length * (T.length - 1) / 2) * legs} matches over ${(n - 1) * legs} rounds.`; };
+          back.querySelector("#gLegs").onchange = info; info();
+          back.querySelector("#gGo").onclick = async () => {
+            const legs = +back.querySelector("#gLegs").value, start = fromInput(back.querySelector("#gStart").value);
+            const gap = Math.max(0, +back.querySelector("#gGap").value || 0), slot = Math.max(0, +back.querySelector("#gSlot").value || 0), venue = back.querySelector("#gVenue").value.trim().slice(0, 60);
+            const list = T.slice(); if (list.length % 2) list.push(null);
+            const n = list.length, rounds = [];
+            let arr = list.slice();
+            for (let r = 0; r < n - 1; r++) {
+              const pairs = [];
+              for (let i = 0; i < n / 2; i++) { const a = arr[i], b = arr[n - 1 - i]; if (a && b) pairs.push(r % 2 ? [b, a] : [a, b]); }
+              rounds.push(pairs);
+              arr = [arr[0], arr[n - 1], ...arr.slice(1, n - 1)];
+            }
+            const all = legs === 2 ? [...rounds, ...rounds.map(p => p.map(([a, b]) => [b, a]))] : rounds;
+            const ch = {};
+            if (back.querySelector("#gReplace")?.checked) existing.filter(f => !hasScore(f)).forEach(f => { ch[`auctions/${code}/hub/fixtures/${f.id}`] = null; });
+            let order = Date.now();
+            all.forEach((pairs, r) => pairs.forEach(([home, away], k) => {
+              const at = start ? start + r * gap * 864e5 + k * slot * 60000 : 0;
+              ch[`auctions/${code}/hub/fixtures/${newId()}`] = { home, away, at, venue, stage: "league", round: r + 1, status: "scheduled", order: order++ };
+            }));
+            await update(ref(db), ch);
+            close(true);
+            tab = "matches"; matchFilter = "upcoming"; location.hash = "matches"; render();
+          };
+        });
+    }
+
+    async function settingsForm() {
+      const P = HS();
+      await form("Points & table", `
+        <div class="hub-fgrid">
+          <label>Points for a win<input class="input" type="number" min="0" id="pW" value="${P.win}"></label>
+          <label>Points for a draw<input class="input" type="number" min="0" id="pD" value="${P.draw}"></label>
+          <label>Points for a loss<input class="input" type="number" id="pL" value="${P.loss}"></label>
+          <label>Teams that qualify <small class="muted">(highlighted, 0 = none)</small><input class="input" type="number" min="0" id="pQ" value="${P.qualify || 0}"></label>
+        </div>
+        <div class="dlg-actions"><button class="btn btn-light" data-cancel>Cancel</button><button class="btn btn-sun" id="pSave">Save</button></div>`,
+        (back, close) => {
+          back.querySelector("#pSave").onclick = async () => {
+            await update(ref(db, `auctions/${code}/hub/settings`), { win: +back.querySelector("#pW").value || 0, draw: +back.querySelector("#pD").value || 0, loss: +back.querySelector("#pL").value || 0, qualify: +back.querySelector("#pQ").value || 0 });
+            close(true);
+          };
+        });
+    }
+
+    // ============================================================
+    // Manage: results, live. Every change saves at once, so viewers see goals as they happen
+    // ============================================================
+    let resultBox = null;
+    function openResult(id) {
+      const back = document.createElement("div");
+      back.className = "modal-back";
+      resultBox = { back, id, adding: null };
+      document.body.appendChild(back);
+      drawResult();
+      back.addEventListener("click", onResultClick);
+      back.addEventListener("change", onResultChange);
+    }
+    function playerOpts(tid, sel = "", blank = "Pick the player") {
+      return `<option value="">${blank}</option>${squadIds(tid).map(([pid, p]) => `<option value="${pid}" ${pid === sel ? "selected" : ""}>${safe(p.name)}${positionOf(p, A.settings) ? ` · ${safe(positionOf(p, A.settings))}` : ""}</option>`).join("")}<option value="__other">Someone else (type a name)</option>`;
+    }
+    function drawResult() {
+      if (!resultBox) return;
+      const f = fixtures().find(x => x.id === resultBox.id);
+      if (!f) { resultBox.back.remove(); resultBox = null; return; }
+      const s = scoreOf(f), ev = evList(f), ad = resultBox.adding;
+      const side = (tid, key) => `
+        <div class="rs-side" style="--c:${safe(team(tid).color)}">
+          <div class="rs-head">${crest(tid, "lg")}<b>${safe(team(tid).name)}</b><span class="rs-n">${key === "h" ? s.h : s.a}</span></div>
+          <ul class="rs-evs">${ev.filter(e => e.team === tid).map(e => `<li>${evIcon(e.type)} <span><b>${safe(pname(e.pid, e))}</b>${e.type === "pen" ? " (pen)" : e.type === "og" ? " (own goal)" : ""}${e.assist ? ` <small>· assist ${safe(pname(e.assist))}</small>` : ""}</span><em>${e.min ? e.min + "′" : ""}</em><button class="icon-btn" data-rmev="${e.id}" aria-label="Remove">✕</button></li>`).join("") || `<li class="muted" style="justify-content:center">Nothing yet</li>`}</ul>
+          ${ad && ad.team === tid ? `<div class="rs-add">
+              <div class="hub-fgrid">
+                <label>${ad.kind === "goal" ? "Scorer" : "Player"}<select class="select" id="adP">${playerOpts(tid, ad.pid || "")}</select></label>
+                ${ad.pid === "__other" ? `<label>Name<input class="input" id="adN" maxlength="24"></label>` : ""}
+                <label>${ad.kind === "goal" ? "Type" : "Card"}<select class="select" id="adT">${ad.kind === "goal" ? `<option value="goal">Goal</option><option value="pen">Penalty</option><option value="og">Own goal</option>` : `<option value="yellow">🟨 Yellow</option><option value="red">🟥 Red</option>`}</select></label>
+                <label>Minute<input class="input" type="number" min="1" max="130" id="adM" placeholder="e.g. 23"></label>
+                ${ad.kind === "goal" ? `<label>Assist <small class="muted">(optional)</small><select class="select" id="adA">${playerOpts(tid, "", "No assist").replace(/<option value="__other">.*?<\/option>/, "")}</select></label>` : ""}
+              </div>
+              <div class="row" style="gap:8px;justify-content:flex-end"><button class="btn btn-light btn-sm" data-addcancel>Cancel</button><button class="btn btn-sun btn-sm" data-addsave>Add ${ad.kind === "goal" ? "goal" : "card"}</button></div>
+            </div>` : `<div class="row" style="gap:8px"><button class="btn btn-sun btn-sm grow" data-addgoal="${tid}">＋ Goal</button><button class="btn btn-light btn-sm grow" data-addcard="${tid}">＋ Card</button></div>`}
+        </div>`;
+      const motmOpts = `<option value="">Not chosen</option>${[f.home, f.away].map(tid => `<optgroup label="${safe(team(tid).name)}">${squadIds(tid).map(([pid, p]) => `<option value="${pid}" ${pid === f.motm ? "selected" : ""}>${safe(p.name)}</option>`).join("")}</optgroup>`).join("")}`;
+      const keep = resultBox.back.querySelector(".hub-result") ? resultBox.back.querySelector(".hub-result").scrollTop : 0;
+      resultBox.back.innerHTML = `<section class="card modal hub-result">
+          <button class="icon-btn modal-x" aria-label="Close">✕</button>
+          <p class="hm-meta">${safe(STAGES[f.stage || "league"])}${f.round ? ` · Round ${f.round}` : ""}${f.at ? ` · ${fmtShort(f.at)}, ${fmtTime(f.at)}` : ""}</p>
+          <div class="hub-seg rs-status">${[["scheduled", "Not started"], ["live", "🔴 Live"], ["done", "Full time"]].map(([k, l]) => `<button type="button" class="${(f.status || "scheduled") === k ? "on" : ""}" data-status="${k}">${l}</button>`).join("")}</div>
+          <div class="rs-grid">${side(f.home, "h")}${side(f.away, "a")}</div>
+          ${isKO(f.stage) && s.h === s.a ? `<div class="rs-pens"><b>Penalty shootout</b> <input class="input" type="number" min="0" id="pnH" value="${f.pens && f.pens.h != null ? f.pens.h : ""}" placeholder="${safe(team(f.home).name)}"> – <input class="input" type="number" min="0" id="pnA" value="${f.pens && f.pens.a != null ? f.pens.a : ""}" placeholder="${safe(team(f.away).name)}"></div>` : ""}
+          <label class="rs-motm">⭐ Player of the match<select class="select" id="rsMotm">${motmOpts}</select></label>
+          <p class="hint" style="text-align:center;margin-top:12px">Every change is saved instantly and shows on everyone's screen.</p>
+          <div class="dlg-actions"><button class="btn btn-sun" data-done>Done</button></div>
+        </section>`;
+      resultBox.back.querySelector(".hub-result").scrollTop = keep;
+    }
+    async function onResultClick(e) {
+      const rb = resultBox; if (!rb) return;
+      const f = fixtures().find(x => x.id === rb.id);
+      if (e.target === rb.back || e.target.closest(".modal-x") || e.target.closest("[data-done]")) { rb.back.remove(); resultBox = null; return; }
+      const st = e.target.closest("[data-status]");
+      if (st) {
+        const v = st.dataset.status;
+        if (v === "done" && !f.motm && squadIds(f.home).length) { /* fine: MOTM is optional */ }
+        await save(f.id, { status: v, ...(v === "live" && !f.startedAt ? { startedAt: Date.now() } : {}) });
+        return;
+      }
+      if (e.target.closest("[data-addgoal]")) { rb.adding = { kind: "goal", team: e.target.closest("[data-addgoal]").dataset.addgoal }; drawResult(); return; }
+      if (e.target.closest("[data-addcard]")) { rb.adding = { kind: "card", team: e.target.closest("[data-addcard]").dataset.addcard }; drawResult(); return; }
+      if (e.target.closest("[data-addcancel]")) { rb.adding = null; drawResult(); return; }
+      if (e.target.closest("[data-addsave]")) {
+        const box = rb.back, ad = rb.adding;
+        let pid = box.querySelector("#adP").value, n = box.querySelector("#adN") ? box.querySelector("#adN").value.trim().slice(0, 24) : "";
+        if (pid === "__other") pid = "";
+        if (!pid && !n && ad.kind === "card") { box.querySelector("#adP").focus(); return; }
+        const ev = { type: box.querySelector("#adT").value, team: ad.team, min: Math.max(0, Math.min(130, +box.querySelector("#adM").value || 0)) || null, at: Date.now(),
+          ...(pid ? { pid } : {}), ...(n ? { n } : {}) };
+        const as = box.querySelector("#adA") ? box.querySelector("#adA").value : "";
+        if (as && as !== pid && ev.type !== "og") ev.assist = as;
+        rb.adding = null;
+        const patch = { [`events/${newId()}`]: ev };
+        if ((f.status || "scheduled") === "scheduled") patch.status = "live";             // the first goal starts the match
+        await save(f.id, patch);
+        return;
+      }
+      const rm = e.target.closest("[data-rmev]");
+      if (rm) { if (await confirmBox("Remove this?", "It comes off the match and the stats.", { ok: "Remove", danger: true, icon: "🗑️" })) await save(f.id, { [`events/${rm.dataset.rmev}`]: null }); }
+    }
+    async function onResultChange(e) {
+      const rb = resultBox; if (!rb) return;
+      const f = fixtures().find(x => x.id === rb.id);
+      if (e.target.id === "adP") { rb.adding.pid = e.target.value; const keepT = rb.back.querySelector("#adT").value, keepM = rb.back.querySelector("#adM").value; drawResult(); rb.back.querySelector("#adT").value = keepT; rb.back.querySelector("#adM").value = keepM; return; }
+      if (e.target.id === "rsMotm") await save(f.id, { motm: e.target.value || null });
+      if (e.target.id === "pnH" || e.target.id === "pnA") {
+        const h = rb.back.querySelector("#pnH").value, a = rb.back.querySelector("#pnA").value;
+        await save(f.id, { pens: h === "" && a === "" ? null : { h: h === "" ? null : +h, a: a === "" ? null : +a } });
+      }
+    }
+
+    async function deleteMatch(id) {
+      const f = fixtures().find(x => x.id === id);
+      if (!f) return;
+      if (!await confirmBox("Delete this match?", `${team(f.home).name} vs ${team(f.away).name}${hasScore(f) ? " and its result" : ""} will be removed.`, { ok: "Delete", danger: true, icon: "🗑️" })) return;
+      await set(fRef(id), null);
+    }
+
+    // ============================================================
+    // Events
+    // ============================================================
+    root.addEventListener("click", e => {
+      const t = e.target.closest("[data-tab]");
+      if (t) { tab = t.dataset.tab; history.replaceState(null, "", `?a=${code}#${tab}`); render(); scrollTo({ top: Math.min(scrollY, root.querySelector(".hub-tabs").offsetTop - 10), behavior: "smooth" }); return; }
+      const fl = e.target.closest("[data-filter]"); if (fl) { matchFilter = fl.dataset.filter; render(); return; }
+      const act = e.target.closest("[data-act]");
+      if (act) {
+        const a = act.dataset.act;
+        if (a === "manage-gen") { manage = true; render(); return generate(); }
+        if (a === "add") return editMatch(null);
+        if (a === "gen") return generate();
+        if (a === "settings") return settingsForm();
+      }
+      const r = e.target.closest("[data-result]"); if (r) return openResult(r.dataset.result);
+      const ed = e.target.closest("[data-edit]"); if (ed) return editMatch(ed.dataset.edit);
+      const del = e.target.closest("[data-del]"); if (del) return deleteMatch(del.dataset.del);
+      const tm = e.target.closest("[data-team]"); if (tm) { openTeam = openTeam === tm.dataset.team ? null : tm.dataset.team; render(); return; }
+      const m = e.target.closest("[data-match]"); if (m) return openMatch(m.dataset.match);
+    });
+    root.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.matches("[data-match]")) openMatch(e.target.dataset.match); });
+    root.addEventListener("change", e => { if (e.target.id === "manageTgl") { manage = e.target.checked; render(); } });
+    addEventListener("hashchange", () => { const h = location.hash.slice(1); if (TABS.some(x => x[0] === h) && h !== tab) { tab = h; render(); } });
+
+    // ============================================================
+    // Start
+    // ============================================================
+    async function refreshBanners() {
+      const key = JSON.stringify(A.banners || {});
+      if (key === bannerKey) return;
+      bannerKey = key;
+      const srcs = await loadBanners(code, A.banners, bannerCache);
+      setPageBackground(srcs[0]);
+      document.documentElement.style.setProperty("--hub-hero", srcs[0] ? `url("${srcs[0]}")` : "none");
+    }
+    async function start() {
+      if (!code) { root.innerHTML = `<div class="card hub-locked"><h1 class="title">No tournament chosen</h1><p class="lead">Open the hub from an auction's results.</p></div>`; return; }
+      user = (await currentUser()) || (await ensureGuest());
+      onValue(ref(db, `auctions/${code}`), async snap => {
+        A = snap.val();
+        if (!A) { root.innerHTML = `<div class="card hub-locked"><h1 class="title">Tournament not found</h1><p class="lead">Check the link and try again.</p></div>`; return; }
+        applySportTheme((A.settings && A.settings.sport) || "football");
+        render();
+        document.querySelectorAll(".modal-back.hub-live-modal").forEach(b => b._redraw && b._redraw());
+        drawResult();
+        refreshTourLogo(code, A);
+        refreshBanners();
+        if (await loadTeamLogos(code, A.teams, logos)) render();
+      }, err => { root.innerHTML = `<div class="card hub-locked"><h1 class="title">Can't open this hub</h1><p class="lead">${safe(err.message || "")}</p></div>`; });
+    }
+    start();
+  </script>
+</body>
+</html>

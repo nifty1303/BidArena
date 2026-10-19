@@ -60,6 +60,14 @@
       return rawFixtures().map(f => ({ ...f, rawHome: f.home, rawAway: f.away, home: res(f.home), away: res(f.away) }));
     };
     const teamsSet = f => !isPh(f.home) && !isPh(f.away);
+    // Match officials: editable until the match is marked Full time, then locked
+    const OFFICIALS = [["ref", "Referee"], ["l1", "Linesman 1"], ["l2", "Linesman 2"]];
+    const offLocked = f => !!f && f.status === "done";
+    const officialsHTML = f => { const o = (f && f.officials) || {}; return OFFICIALS.filter(([k]) => o[k]).length
+      ? `<div class="hm-officials"><span>🧑‍⚖️ Referee <b>${safe(o.ref || "–")}</b></span>${o.l1 || o.l2 ? `<span>🚩 Linesmen <b>${safe([o.l1, o.l2].filter(Boolean).join(", "))}</b></span>` : ""}</div>` : ""; };
+    const officialInputs = (f, pre) => `<div class="hub-fgrid off-grid">${OFFICIALS.map(([k, l]) => `<label>${l}<input class="input" id="${pre}${k}" maxlength="40" value="${safe(((f && f.officials) || {})[k] || "")}" ${offLocked(f) ? "disabled" : ""} placeholder="${k === "ref" ? "Name" : "Name (optional)"}"></label>`).join("")}</div>
+      ${offLocked(f) ? `<p class="hint" style="margin:4px 0 0">🔒 Locked because the match has ended. Switch it back from Full time to change.</p>` : ""}`;
+    const readOfficials = (box, pre) => { const o = {}; OFFICIALS.forEach(([k]) => { const v = box.querySelector("#" + pre + k).value.trim().slice(0, 40); if (v) o[k] = v; }); return Object.keys(o).length ? o : null; };
     const squadIds = tid => Object.entries((A && A.players) || {}).filter(([, p]) => p.status === "sold" && p.soldTo === tid)
       .sort((a, b) => catList(A.settings).findIndex(c => c.id === a[1].cat) - catList(A.settings).findIndex(c => c.id === b[1].cat) || String(a[1].name).localeCompare(String(b[1].name)));
     const pname = (pid, ev) => (pid && A.players && A.players[pid] ? A.players[pid].name : (ev && ev.n) || "Unknown");
@@ -344,6 +352,7 @@
             <div class="hm-team">${crest(g.away, "xl")}<b>${safe(team(g.away).name)}</b></div>
           </div>
           ${ev.length ? `<ul class="hm-events">${ev.map(e => eventLine(g, e)).join("")}</ul>` : hasScore(g) ? `<p class="muted" style="text-align:center">No goals or cards recorded.</p>` : ""}
+          ${officialsHTML(g)}
           ${g.motm ? `<div class="hm-motm">⭐ Player of the match <b>${safe(pname(g.motm))}</b> <span>${safe(team((A.players[g.motm] || {}).soldTo).name)}</span></div>` : ""}
           ${g.note ? `<p class="hm-note">${safe(g.note)}</p>` : ""}
           ${isStaff() ? `<div class="row" style="justify-content:center;gap:8px;margin-top:14px"><button class="btn btn-sun btn-sm" data-result="${g.id}">${played(g) ? "Edit result" : "Enter result"}</button><button class="btn btn-light btn-sm" data-edit="${g.id}">Edit match</button></div>` : ""}
@@ -391,6 +400,7 @@
           <label>Venue<input class="input" id="mVenue" maxlength="60" placeholder="e.g. KAFCO Ground" value="${safe((f && f.venue) || (fixtures().find(x => x.venue) || {}).venue || "")}"></label>
           <label>Stage<select class="select" id="mStage">${stageOpts(f && f.stage)}</select></label>
           <label>Round <small class="muted">(optional)</small><input class="input" type="number" min="1" id="mRound" value="${(f && f.round) || ""}"></label>
+          <div class="full"><p class="off-title">Match officials</p>${officialInputs(f, "mo_")}</div>
           <label class="full">Note <small class="muted">(optional, shown to everyone)</small><input class="input" id="mNote" maxlength="120" value="${safe((f && f.note) || "")}" placeholder="e.g. Kick-off moved due to rain"></label>
         </div>
         <p class="err" id="mErr"></p>
@@ -400,7 +410,8 @@
             const home = back.querySelector("#mHome").value, away = back.querySelector("#mAway").value;
             if (home === away && home !== "tbd") { back.querySelector("#mErr").textContent = "Pick two different teams."; return; }
             const data = { home, away, at: fromInput(back.querySelector("#mAt").value), venue: back.querySelector("#mVenue").value.trim().slice(0, 60),
-              stage: back.querySelector("#mStage").value, round: +back.querySelector("#mRound").value || null, note: back.querySelector("#mNote").value.trim().slice(0, 120) || null };
+              stage: back.querySelector("#mStage").value, round: +back.querySelector("#mRound").value || null, note: back.querySelector("#mNote").value.trim().slice(0, 120) || null,
+              ...(offLocked(f) ? {} : { officials: readOfficials(back, "mo_") }) };
             if (f) await save(f.id, data);
             else await set(fRef(newId()), { ...data, status: "scheduled", order: Date.now() });
             close(true);
@@ -527,6 +538,7 @@
           <div class="rs-grid">${side(f.home, "h")}${side(f.away, "a")}</div>
           ${pensFor(f) && s.h === s.a ? `<div class="rs-pens"><b>Penalty shootout</b> <input class="input" type="number" min="0" id="pnH" value="${f.pens && f.pens.h != null ? f.pens.h : ""}" placeholder="${safe(team(f.home).name)}"> – <input class="input" type="number" min="0" id="pnA" value="${f.pens && f.pens.a != null ? f.pens.a : ""}" placeholder="${safe(team(f.away).name)}"></div>` : ""}
           <label class="rs-motm">⭐ Player of the match<select class="select" id="rsMotm">${motmOpts}</select></label>
+          <div class="rs-off"><p class="off-title">Match officials</p>${officialInputs(f, "ro_")}</div>
           <p class="hint" style="text-align:center;margin-top:12px">Every change is saved instantly and shows on everyone's screen.</p>
           <div class="dlg-actions"><button class="btn btn-sun" data-done>Done</button></div>
         </section>`;
@@ -569,6 +581,7 @@
       const f = fixtures().find(x => x.id === rb.id);
       if (e.target.id === "adP") { rb.adding.pid = e.target.value; const keepT = rb.back.querySelector("#adT").value, keepM = rb.back.querySelector("#adM").value; drawResult(); rb.back.querySelector("#adT").value = keepT; rb.back.querySelector("#adM").value = keepM; return; }
       if (e.target.id === "rsMotm") await save(f.id, { motm: e.target.value || null });
+      if (/^ro_/.test(e.target.id) && !offLocked(f)) await save(f.id, { officials: readOfficials(rb.back, "ro_") });
       if (e.target.id === "pnH" || e.target.id === "pnA") {
         const h = rb.back.querySelector("#pnH").value, a = rb.back.querySelector("#pnA").value;
         await save(f.id, { pens: h === "" && a === "" ? null : { h: h === "" ? null : +h, a: a === "" ? null : +a } });

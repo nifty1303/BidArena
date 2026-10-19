@@ -1455,3 +1455,11 @@ body.has-reactdock .wrap { padding-bottom: 90px; }
 .mc-team.ph span { font-style: italic; color: var(--dim); font-weight: 700; }
 .mc-team.ph .crest { opacity: 0.55; }
 .mc-ph-note { margin-right: auto; font-size: 12px; font-weight: 700; color: var(--dim); }
+
+/* match officials */
+.off-title { margin: 6px 0 0; font-size: 13px; font-weight: 800; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.off-grid { grid-template-columns: repeat(3, 1fr); margin-top: 6px; }
+.rs-off { margin-top: 12px; }
+.hm-officials { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px; margin-top: 12px; padding: 10px 12px; border-radius: 14px; background: var(--panel2); font-size: 14px; color: var(--dim); }
+.hm-officials b { color: var(--ink); }
+@media (max-width: 760px) { .off-grid { grid-template-columns: 1fr; } }

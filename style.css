@@ -1517,3 +1517,11 @@ body.has-reactdock .wrap { padding-bottom: 90px; }
 .rs-evs li.og { border-left: 4px solid var(--oc); }
 .mc-ev > div > span { display: inline-flex; align-items: center; gap: 4px; }
 .mc-ev .a > span { justify-content: flex-end; }
+
+/* hub share */
+.share-link { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-radius: 14px; background: var(--panel2); border: 1px solid var(--line); }
+.share-link b { font-size: 17px; overflow-wrap: anywhere; color: var(--accent); }
+.share-slug { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line2); }
+.slug-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.slug-row span { font-weight: 700; color: var(--dim); }
+.slug-row .input { flex: 1 1 140px; min-width: 120px; }

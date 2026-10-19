@@ -9,3 +9,7 @@ services:
       - path: /*
         name: Cache-Control
         value: no-cache
+    routes:
+      - type: rewrite
+        source: /t/*
+        destination: /hub.html

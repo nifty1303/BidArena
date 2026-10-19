@@ -87,7 +87,7 @@
       catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine,
       dialog, alertBox, confirmBox, copyText, teamBudget, purseLeftOf,
       playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
-      mountBidders, watchConnection, ensureGuest, showBreak, squadCardBlob, squadCSV, shareOrDownload, allSquadsCardBlob, downloadBlob, fileSafe, squadGroupsHTML, watchReactions, floatReaction, pruneReactions, REACT_GAPS, teamSquad, refreshTourLogo, renderSquadShow, catIntroHTML, introOn, lotSounds
+      mountBidders, watchConnection, ensureGuest, showBreak, squadCardBlob, squadCSV, shareOrDownload, allSquadsCardBlob, downloadBlob, fileSafe, squadGroupsHTML, SIGN_WAYS, viaLabel, viaText, newId, cleanName, watchReactions, floatReaction, pruneReactions, REACT_GAPS, teamSquad, refreshTourLogo, renderSquadShow, catIntroHTML, introOn, lotSounds
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction room");
@@ -1164,6 +1164,89 @@
     // ============================================================
     // Results
     // ============================================================
+    // ---------- players who join a team outside the auction (lottery, draft, replacement…) ----------
+    async function addOutside(tid) {
+      const s = S(), t = A.teams[tid], cats = catList(s);
+      const free = players().filter(([, p]) => p.status !== "sold").sort((a, b) => String(a[1].name).localeCompare(b[1].name));
+      const added = players().filter(([, p]) => p.status === "sold" && p.soldTo === tid && p.via);
+      const opt = ([id, p]) => `<option value="${id}">${safe(p.name)} · ${safe(catOf(p).name)}${p.status === "unsold" ? " (unsold)" : ""}</option>`;
+      const res = await dialog({
+        title: `Add a player to ${t.name}`, icon: "🎟", wide: true, dismiss: null,
+        html: `<p class="hint" style="margin-top:0">For players who join outside the bidding. They're marked with how they joined everywhere the squad shows, and don't count in auction awards.</p>
+          <div class="hub-fgrid">
+            <label class="full">Player<select class="select" id="opWho"><option value="__new">＋ New player (type the name)</option>
+              ${free.length ? `<optgroup label="From the player list">${free.map(opt).join("")}</optgroup>` : ""}</select></label>
+            <label id="opNameL">Name<input class="input" id="opName" maxlength="40" placeholder="Player name"></label>
+            <label id="opCatL">Category<select class="select" id="opCat">${cats.map(c => `<option value="${c.id}">${safe(c.name)}</option>`).join("")}</select></label>
+            <label>How they joined<select class="select" id="opVia">${Object.entries(SIGN_WAYS).map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select></label>
+            <label id="opNoteL" hidden>Describe it<input class="input" id="opNote" maxlength="24" placeholder="e.g. Wildcard"></label>
+            <label>Price <small class="muted">(leave empty if free)</small><input class="input" type="number" min="0" id="opPrice" placeholder="0"></label>
+            <label class="hub-check full" id="opPayL" hidden><input type="checkbox" id="opPay" checked> Take the price from ${safe(t.name)}'s budget (${money(purseLeftOf(t, s), s)} left)</label>
+          </div>
+          <p class="err" id="opErr"></p>
+          ${added.length ? `<h4 style="margin:14px 0 6px">Already added outside the auction</h4><ul class="op-list">${added.map(([id, p]) => `<li><span><b>${safe(p.name)}</b> <span class="via-tag">${safe(viaLabel(p))}</span></span><button class="btn btn-light btn-sm" data-oprm="${id}">Remove</button></li>`).join("")}</ul>` : ""}`,
+        buttons: [{ label: "Cancel", value: null, kind: "light" }, { label: "Add to squad", value: "add", kind: "sun" }],
+        onMount: (box, close) => {
+          const sync = () => {
+            const isNew = box.querySelector("#opWho").value === "__new";
+            box.querySelector("#opNameL").hidden = !isNew; box.querySelector("#opCatL").hidden = !isNew;
+            box.querySelector("#opNoteL").hidden = box.querySelector("#opVia").value !== "other";
+            box.querySelector("#opPayL").hidden = !(+box.querySelector("#opPrice").value > 0);
+          };
+          box.addEventListener("input", sync); box.addEventListener("change", sync); sync();
+          box.querySelector("#opName").focus();
+          box.addEventListener("click", async e => {
+            const rm = e.target.closest("[data-oprm]");
+            if (rm) { close(null); await removeOutside(rm.dataset.oprm); return; }
+            const go = e.target.closest('[data-dlg="1"]');
+            if (!go) return;
+            e.stopPropagation();
+            const who = box.querySelector("#opWho").value, name = box.querySelector("#opName").value.trim();
+            if (who === "__new" && name.length < 2) { box.querySelector("#opErr").textContent = "Type the player's name."; return; }
+            if (box.querySelector("#opVia").value === "other" && !box.querySelector("#opNote").value.trim()) { box.querySelector("#opErr").textContent = "Describe how they joined (e.g. Wildcard)."; return; }
+            close({ who, name, cat: box.querySelector("#opCat").value, via: box.querySelector("#opVia").value, note: box.querySelector("#opNote").value.trim(),
+              price: Math.max(0, +box.querySelector("#opPrice").value || 0), pay: box.querySelector("#opPay").checked });
+          }, true);
+        }
+      });
+      if (!res || res === "add") return;
+      const pid = res.who === "__new" ? "x" + newId() : res.who;
+      const prev = res.who === "__new" ? null : A.players[pid];
+      const cat = prev ? prev.cat : res.cat, pays = res.price > 0 && res.pay;
+      const tc = (t.cat && t.cat[cat]) || 0;
+      const ch = {
+        [`auctions/${code}/players/${pid}`]: {
+          ...(prev || { name: cleanName(res.name).slice(0, 40), cat, order: 100000 + Date.now() % 100000 }),
+          status: "sold", soldTo: tid, price: res.price, via: res.via, ...(res.via === "other" ? { viaNote: res.note.slice(0, 24) } : {}),
+          viaAt: Date.now(), viaPrev: prev ? (prev.status || "pending") : "new", ...(pays ? { viaPaid: true } : {})
+        },
+        [`auctions/${code}/teams/${tid}/count`]: (t.count || 0) + 1,
+        [`auctions/${code}/teams/${tid}/cat/${cat}`]: tc + 1
+      };
+      if (pays) {
+        ch[`auctions/${code}/teams/${tid}/spent`] = (t.spent || 0) + res.price;
+        ch[`auctions/${code}/teams/${tid}/purseLeft`] = purseLeftOf(t, s) - res.price;
+      }
+      await update(ref(db), ch);
+      toast(`${prev ? prev.name : res.name} added to ${t.name} · ${viaLabel({ via: res.via, viaNote: res.note })}`);
+    }
+    async function removeOutside(pid) {
+      const p = A.players[pid], t = p && A.teams[p.soldTo];
+      if (!p || !p.via || !t) return;
+      if (!await confirmBox(`Remove ${p.name}?`, `${p.name} leaves ${t.name}${p.viaPaid ? ` and ${money(p.price, S())} goes back to their budget` : ""}.`, { ok: "Remove", danger: true, icon: "↩️" })) return;
+      const ch = {
+        [`auctions/${code}/teams/${p.soldTo}/count`]: Math.max(0, (t.count || 1) - 1),
+        [`auctions/${code}/teams/${p.soldTo}/cat/${p.cat}`]: Math.max(0, ((t.cat && t.cat[p.cat]) || 1) - 1)
+      };
+      if (p.viaPaid) {
+        ch[`auctions/${code}/teams/${p.soldTo}/spent`] = Math.max(0, (t.spent || 0) - (p.price || 0));
+        ch[`auctions/${code}/teams/${p.soldTo}/purseLeft`] = purseLeftOf(t, S()) + (p.price || 0);
+      }
+      if (p.viaPrev === "new") ch[`auctions/${code}/players/${pid}`] = null;
+      else ["soldTo", "price", "via", "viaNote", "viaAt", "viaPrev", "viaPaid"].forEach(k => { ch[`auctions/${code}/players/${pid}/${k}`] = null; }), ch[`auctions/${code}/players/${pid}/status`] = p.viaPrev || "pending";
+      await update(ref(db), ch);
+    }
+
     function renderResults() {
       $("roomGrid").hidden = true;
       $("message").hidden = true;
@@ -1197,7 +1280,7 @@
             <div class="squad-head">${crest(id, "lg")}<div><h3>${safe(t.name)}</h3><span class="muted">${mine.length} player${mine.length === 1 ? "" : "s"} · spent ${money(t.spent || 0, s)} · ${money(purseLeftOf(t, s), s)} left</span></div></div>
             ${missing.length ? `<p class="short-note">Short of minimum: ${safe(missing.join(", "))}</p>` : ""}
             ${squadGroupsHTML(A, id, { empty: "No players" })}
-            <div class="squad-actions"><button class="btn btn-light btn-sm" data-cardget="${id}">⬇ Card</button><button class="btn btn-light btn-sm" data-card="${id}">📤 Share</button><button class="btn btn-light btn-sm" data-sqcsv="${id}">⬇ CSV</button></div>
+            <div class="squad-actions"><button class="btn btn-light btn-sm" data-cardget="${id}">⬇ Card</button><button class="btn btn-light btn-sm" data-card="${id}">📤 Share</button><button class="btn btn-light btn-sm" data-sqcsv="${id}">⬇ CSV</button>${DISPLAY ? "" : `<button class="btn btn-dark btn-sm" data-addp="${id}" title="Add a player who joined outside the auction (lottery, draft…)">＋ Add player</button>`}</div>
           </div>`;
       }).join("");
       const unsold = players().filter(([, p]) => p.status !== "sold");
@@ -1227,6 +1310,7 @@
       animate(r);
       r.onclick = async e => {
         if (e.target.closest("#whoWatched")) return $("watchBtn").click();
+        const ap = e.target.closest("[data-addp]"); if (ap) return addOutside(ap.dataset.addp);
         const all = e.target.closest("#allCardBtn, #allCardShare");
         if (all) {
           all.disabled = true;
@@ -1245,9 +1329,9 @@
         else downloadCSV(squadCSV(A, id), name);
       };
       $("csvBtn").onclick = () => {
-        const rows = [["Team", "Player", "Details", "Category", "Price", "Base price"]];
+        const rows = [["Team", "Player", "Details", "Category", "Price", "Base price", "Signed via"]];
         teams().forEach(([id, t]) => players().filter(([, p]) => p.soldTo === id && p.status === "sold")
-          .forEach(([, p]) => rows.push([t.name, p.name, playerLine(p, s), catOf(p).name, p.price, catOf(p).base])));
+          .forEach(([, p]) => rows.push([t.name, p.name, playerLine(p, s), catOf(p).name, p.price || 0, catOf(p).base, p.via ? viaText(p) : "Auction"])));
         unsold.forEach(([, p]) => rows.push(["(not sold)", p.name, playerLine(p, s), catOf(p).name, "", catOf(p).base]));
         rows.push([]);
         rows.push(["Team", "Players", "Spent", "Left", ...catList(s).map(c => c.name)]);

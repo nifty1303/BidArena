@@ -1494,3 +1494,15 @@ body.has-reactdock .wrap { padding-bottom: 90px; }
 .mc-score { display: inline-flex; }
 .mc-mid { max-width: 200px; }
 .mc-state { flex-wrap: wrap; text-align: center; }
+
+/* result screen: keep both team boxes inside the modal */
+.rs-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.rs-side { overflow: hidden; }
+.rs-head { flex-wrap: wrap; }
+.rs-head b { flex: 1 1 auto; font-size: 18px; }
+.rs-sub { flex-basis: 100%; margin-left: 0; white-space: normal; }
+.rs-side .row { flex-wrap: wrap; }
+.rs-side .row .btn { min-width: 0; flex: 1 1 90px; }
+.rs-evs li { min-width: 0; }
+.rs-more summary { outline: none; border-radius: 10px; }
+.rs-more summary:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft); }

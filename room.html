@@ -1188,6 +1188,7 @@
         buttons: [{ label: "Cancel", value: null, kind: "light" }, { label: "Add to squad", value: "add", kind: "sun" }],
         onMount: (box, close) => {
           const sync = () => {
+            box.querySelector("#opErr").textContent = "";
             const isNew = box.querySelector("#opWho").value === "__new";
             box.querySelector("#opNameL").hidden = !isNew; box.querySelector("#opCatL").hidden = !isNew;
             box.querySelector("#opNoteL").hidden = box.querySelector("#opVia").value !== "other";

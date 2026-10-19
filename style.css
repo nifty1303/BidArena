@@ -1511,3 +1511,7 @@ body.has-reactdock .wrap { padding-bottom: 90px; }
 
 /* placeholder teams (Rank 1, To be decided) */
 .crest.ph-crest { background: #fff; color: var(--dim); box-shadow: none; border: 2px dashed var(--line2); text-shadow: none; font-family: var(--display); font-weight: 800; }
+
+/* own goals: listed with the team they counted for, tagged in the scorer's colours */
+.og-tag { font-style: normal; display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 800; background: var(--oc); color: #fff; vertical-align: 1px; white-space: nowrap; text-shadow: 0 1px 1px rgba(0,0,0,.25); }
+.rs-evs li.og { border-left: 4px solid var(--oc); }

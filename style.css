@@ -1506,3 +1506,6 @@ body.has-reactdock .wrap { padding-bottom: 90px; }
 .rs-evs li { min-width: 0; }
 .rs-more summary { outline: none; border-radius: 10px; }
 .rs-more summary:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft); }
+.hub-fgrid .hub-check { display: flex; flex-direction: row; align-items: center; gap: 10px; font-size: 14px; font-weight: 700; color: var(--ink); }
+.hub-fgrid .hub-check input { width: 18px; height: 18px; flex: none; margin: 0; }
+.hub-fgrid .hub-check[hidden] { display: none; }

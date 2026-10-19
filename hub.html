@@ -76,6 +76,10 @@
     const squadIds = tid => Object.entries((A && A.players) || {}).filter(([, p]) => p.status === "sold" && p.soldTo === tid)
       .sort((a, b) => catList(A.settings).findIndex(c => c.id === a[1].cat) - catList(A.settings).findIndex(c => c.id === b[1].cat) || String(a[1].name).localeCompare(String(b[1].name)));
     const pname = (pid, ev) => (pid && A.players && A.players[pid] ? A.players[pid].name : (ev && ev.n) || "Unknown");
+    // goals first, then cards; each in minute order (no minute goes last)
+    const isGoalEv = e => e.type === "goal" || e.type === "pen" || e.type === "og";
+    const byMinute = (a, b) => (a.min || 999) - (b.min || 999) || (a.at || 0) - (b.at || 0);
+    const goalsThenCards = list => [...list.filter(isGoalEv).sort(byMinute), ...list.filter(e => !isGoalEv(e)).sort(byMinute)];
     const evList = f => Object.entries(f.events || {}).map(([id, e]) => ({ id, ...e })).sort((a, b) => (a.min || 0) - (b.min || 0) || (a.at || 0) - (b.at || 0));
     function scoreOf(f) {
       let h = 0, a = 0;
@@ -215,7 +219,7 @@
       if (!ev.length) return "";
       const line = tid => {
         const by = {};
-        ev.filter(e => evSide(f, e) === tid).forEach(e => {
+        goalsThenCards(ev.filter(e => evSide(f, e) === tid)).forEach(e => {
           const k = (e.type === "yellow" || e.type === "red" || e.type === "og" ? e.type : "g") + ":" + (e.pid || e.n || "?");
           (by[k] = by[k] || { e, mins: [] }).mins.push(e.min ? e.min + "′" + (e.type === "pen" ? " p" : "") : (e.type === "pen" ? "p" : ""));
         });
@@ -553,7 +557,7 @@
       const side = (tid, key) => `
         <div class="rs-side" style="--c:${safe(team(tid).color)}">
           <div class="rs-head">${crest(tid, "sm")}<b>${safe(team(tid).name)}</b><span class="rs-sub">${(key === "h" ? s.eh : s.ea)} of ${(key === "h" ? s.h : s.a)} goals named</span></div>
-          <ul class="rs-evs">${ev.filter(e => evSide(f, e) === tid).map(e => `<li class="${e.type === "og" ? "og" : ""}" ${e.type === "og" ? `style="--oc:${safe(team(e.team).color)}"` : ""}>${evIcon(e.type)} <span><b>${safe(pname(e.pid, e))}</b>${e.type === "pen" ? " (pen)" : e.type === "og" ? " " + ogTag(e) : ""}${e.assist ? ` <small>· assist ${safe(pname(e.assist))}</small>` : ""}</span><em>${e.min ? e.min + "′" : ""}</em><button class="icon-btn" data-rmev="${e.id}" aria-label="Remove">✕</button></li>`).join("") || `<li class="muted" style="justify-content:center">Nothing yet</li>`}</ul>
+          <ul class="rs-evs">${goalsThenCards(ev.filter(e => evSide(f, e) === tid)).map(e => `<li class="${e.type === "og" ? "og" : ""}" ${e.type === "og" ? `style="--oc:${safe(team(e.team).color)}"` : ""}>${evIcon(e.type)} <span><b>${safe(pname(e.pid, e))}</b>${e.type === "pen" ? " (pen)" : e.type === "og" ? " " + ogTag(e) : ""}${e.assist ? ` <small>· assist ${safe(pname(e.assist))}</small>` : ""}</span><em>${e.min ? e.min + "′" : ""}</em><button class="icon-btn" data-rmev="${e.id}" aria-label="Remove">✕</button></li>`).join("") || `<li class="muted" style="justify-content:center">Nothing yet</li>`}</ul>
           ${ad && ad.team === tid ? `<div class="rs-add">
               <div class="hub-fgrid">
                 <label>${ad.kind === "goal" ? (ad.type === "og" ? `Own goal by (${safe(team(otherSide(f, tid)).name)})` : "Scorer") : "Player"}<select class="select" id="adP">${playerOpts(ad.type === "og" ? otherSide(f, tid) : tid, ad.pid || "")}</select></label>

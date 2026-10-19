@@ -63,6 +63,10 @@
       return rawFixtures().map(f => ({ ...f, rawHome: f.home, rawAway: f.away, home: res(f.home), away: res(f.away) }));
     };
     const teamsSet = f => !isPh(f.home) && !isPh(f.away);
+    // short team code for phones: initials of the name (Angry Falcons -> AF), or the first 3 letters of one word
+    const abbr = id => { if (isPh(id)) return team(id).name; const w = String(team(id).name || "").replace(/[^\p{L}\p{N}\s]/gu, "").trim().split(/\s+/).filter(Boolean);
+      return (w.length > 1 ? w.slice(0, 3).map(x => x[0]).join("") : (w[0] || "?").slice(0, 3)).toUpperCase(); };
+    const nameHTML = id => `<span class="nm-full">${safe(team(id).name)}</span><span class="nm-ab" title="${safe(team(id).name)}">${safe(abbr(id))}</span>`;
     const otherSide = (f, tid) => tid === f.home ? f.away : f.home;
     const evSide = (f, e) => e.type === "og" ? otherSide(f, e.team) : e.team;     // an own goal sits with the team it counted for
     // cards are tight: one name per player (skip prefixes like Md/Mohammed; keep Sr/Jr so namesakes stay apart)
@@ -245,7 +249,7 @@
         ? `<div class="mc-score ${live ? "live" : ""}"><b>${s.h}</b><i>–</i><b>${s.a}</b></div>
            <div class="mc-state">${live ? `<span class="hub-live-dot"></span>LIVE` : "Full time"}${done && pensText(f) ? ` · ${safe(pensText(f))}` : ""}</div>`
         : `<div class="mc-time">${f.at ? fmtTime(f.at) : "TBD"}</div><div class="mc-state">${f.at ? fmtShort(f.at) : "Date TBD"}</div>`;
-      const side = (id, cls) => `<div class="mc-team ${cls} ${isPh(id) ? "ph" : ""} ${done && win && win !== id ? "lost" : ""} ${done && win === id ? "won" : ""}">${crest(id, opts.big ? "lg" : "")}<span>${safe(team(id).name)}</span></div>`;
+      const side = (id, cls) => `<div class="mc-team ${cls} ${isPh(id) ? "ph" : ""} ${done && win && win !== id ? "lost" : ""} ${done && win === id ? "won" : ""}">${crest(id, opts.big ? "lg" : "")}<span>${nameHTML(id)}</span></div>`;
       return `<article class="mc ${live ? "is-live" : ""} ${opts.big ? "big" : ""} ${opts.mini ? "mini" : ""}" data-match="${f.id}" tabindex="0">
           <div class="mc-top"><span class="mc-stage ${isKO(f.stage) ? "ko" : ""}">${safe(STAGES[f.stage || "league"] || "Match")}${f.round ? ` · Round ${f.round}` : ""}</span>${f.venue ? `<span class="mc-venue">📍 ${safe(f.venue)}</span>` : ""}</div>
           <div class="mc-row">${side(f.home, "home")}<div class="mc-mid">${mid}</div>${side(f.away, "away")}</div>
@@ -307,7 +311,7 @@
         <thead><tr><th>#</th><th class="tl">Team</th><th>P</th>${mini ? "" : `<th>W</th>${pens ? `<th title="Won on penalties">PW</th><th title="Lost on penalties">PL</th>` : ""}${showD ? "<th>D</th>" : ""}<th>L</th><th class="hide-sm">GF</th><th class="hide-sm">GA</th>`}<th>GD</th><th>Pts</th>${mini ? "" : `<th class="hide-sm tl">Form</th>`}</tr></thead>
         <tbody>${rows.map((r, i) => `<tr class="${q && i < q ? "q" : ""}" style="--c:${safe(team(r.id).color)}">
           <td class="pos">${i + 1}</td>
-          <td class="tl"><span class="tt">${crest(r.id, "sm")}<b>${safe(team(r.id).name)}</b></span></td>
+          <td class="tl"><span class="tt">${crest(r.id, "sm")}<b>${nameHTML(r.id)}</b></span></td>
           <td>${r.p}</td>${mini ? "" : `<td>${r.w}</td>${pens ? `<td>${r.pw}</td><td>${r.pl}</td>` : ""}${showD ? `<td>${r.d}</td>` : ""}<td>${r.l}</td><td class="hide-sm">${r.gf}</td><td class="hide-sm">${r.ga}</td>`}
           <td>${r.gf - r.ga > 0 ? "+" : ""}${r.gf - r.ga}</td><td class="pts">${r.pts}</td>
           ${mini ? "" : `<td class="hide-sm tl"><span class="form">${r.form.slice(-5).map(formI).join("") || "<small class='muted'>–</small>"}</span></td>`}</tr>`).join("")}</tbody></table></div>`;
@@ -344,7 +348,7 @@
         </div>
         <section class="hub-sec"><h2 class="hub-h">Team stats</h2>
           <div class="hub-table-wrap"><table class="hub-table"><thead><tr><th class="tl">Team</th><th>Played</th><th>Scored</th><th>Conceded</th><th>Clean sheets</th></tr></thead>
-          <tbody>${T.map(r => `<tr style="--c:${safe(team(r.id).color)}"><td class="tl"><span class="tt">${crest(r.id, "sm")}<b>${safe(team(r.id).name)}</b></span></td><td>${r.n}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.cs}</td></tr>`).join("")}</tbody></table></div></section>`;
+          <tbody>${T.map(r => `<tr style="--c:${safe(team(r.id).color)}"><td class="tl"><span class="tt">${crest(r.id, "sm")}<b>${nameHTML(r.id)}</b></span></td><td>${r.n}</td><td>${r.gf}</td><td>${r.ga}</td><td>${r.cs}</td></tr>`).join("")}</tbody></table></div></section>`;
     }
 
     // ---------- Teams ----------

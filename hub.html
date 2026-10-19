@@ -39,7 +39,9 @@
     const H = () => (A && A.hub) || {};
     const HS = () => ({ win: 3, draw: 1, loss: 0, qualify: 0, pens: false, penWin: 2, penLoss: 1, ...(H().settings || {}) });
     // league draws settled by a shootout (when the tournament plays it that way)
-    const shootout = f => { const s = scoreOf(f); return s.h === s.a && f.pens && f.pens.h != null && f.pens.a != null && f.pens.h !== f.pens.a ? (f.pens.h > f.pens.a ? "h" : "a") : null; };
+    const pensWin = f => { const p = f.pens; if (!p) return null; if (p.h != null && p.a != null && p.h !== p.a) return p.h > p.a ? "h" : "a"; return p.win === "h" || p.win === "a" ? p.win : null; };
+    const shootout = f => { const s = scoreOf(f); return s.h === s.a ? pensWin(f) : null; };
+    const pensText = f => { const w = shootout(f); if (!w) return ""; const p = f.pens; return p.h != null && p.a != null ? `pens ${p.h}–${p.a}` : `${team(w === "h" ? f.home : f.away).name} won on pens`; };
     const pensFor = f => isKO(f.stage) || (HS().pens && (f.stage || "league") === "league");
     const teams = () => Object.entries((A && A.teams) || {});
     // Placeholders for matches whose teams aren't known yet: "rank:1" (league position) or "tbd"
@@ -78,7 +80,7 @@
         if (e.type === "goal" || e.type === "pen") { if (e.team === f.home) h++; else if (e.team === f.away) a++; }
         if (e.type === "og") { if (e.team === f.home) a++; else if (e.team === f.away) h++; }   // an own goal counts for the other side
       });
-      return { h, a };
+      return { h: f.hs != null ? f.hs : h, a: f.as != null ? f.as : a, eh: h, ea: a };   // the main score wins; scorers are extra detail
     }
     const played = f => f.status === "done";
     const hasScore = f => f.status === "done" || f.status === "live";
@@ -86,7 +88,7 @@
       if (!played(f)) return null;
       const { h, a } = scoreOf(f);
       if (h !== a) return h > a ? f.home : f.away;
-      if (f.pens && f.pens.h != null && f.pens.a != null && f.pens.h !== f.pens.a) return f.pens.h > f.pens.a ? f.home : f.away;
+      if (shootout(f)) return shootout(f) === "h" ? f.home : f.away;
       return null;
     }
 
@@ -200,16 +202,35 @@
     }
 
     // ---------- match card ----------
+    // under the teams: officials before kick-off; scorers and cards once it starts
+    function cardFoot(f) {
+      if (!hasScore(f)) {
+        const o = f.officials || {};
+        return o.ref || o.l1 || o.l2 ? `<div class="mc-off">${o.ref ? `🧑‍⚖️ ${safe(o.ref)}` : ""}${o.l1 || o.l2 ? `<span>🚩 ${safe([o.l1, o.l2].filter(Boolean).join(", "))}</span>` : ""}</div>` : "";
+      }
+      const ev = evList(f);
+      if (!ev.length) return "";
+      const line = tid => {
+        const by = {};
+        ev.filter(e => e.team === tid).forEach(e => {
+          const k = (e.type === "yellow" || e.type === "red" ? e.type : "g") + ":" + (e.pid || e.n || "?");
+          (by[k] = by[k] || { e, mins: [] }).mins.push(e.min ? e.min + "′" + (e.type === "pen" ? " p" : e.type === "og" ? " og" : "") : (e.type === "pen" ? "p" : e.type === "og" ? "og" : ""));
+        });
+        return Object.values(by).map(({ e, mins }) => `<span>${e.type === "yellow" ? "🟨" : e.type === "red" ? "🟥" : "⚽"} ${safe(pname(e.pid, e))}${mins.filter(Boolean).length ? ` <small>${mins.filter(Boolean).join(", ")}</small>` : ""}</span>`).join("");
+      };
+      return `<div class="mc-ev"><div class="h">${line(f.home)}</div><div class="a">${line(f.away)}</div></div>`;
+    }
     function matchCard(f, opts = {}) {
       const s = scoreOf(f), live = f.status === "live", done = played(f), win = winnerOf(f);
       const mid = hasScore(f)
         ? `<div class="mc-score ${live ? "live" : ""}"><b>${s.h}</b><i>–</i><b>${s.a}</b></div>
-           <div class="mc-state">${live ? `<span class="hub-live-dot"></span>LIVE` : "Full time"}${done && f.pens && f.pens.h != null && s.h === s.a ? ` · pens ${f.pens.h}–${f.pens.a}` : ""}</div>`
+           <div class="mc-state">${live ? `<span class="hub-live-dot"></span>LIVE` : "Full time"}${done && pensText(f) ? ` · ${safe(pensText(f))}` : ""}</div>`
         : `<div class="mc-time">${f.at ? fmtTime(f.at) : "TBD"}</div><div class="mc-state">${f.at ? fmtShort(f.at) : "Date TBD"}</div>`;
       const side = (id, cls) => `<div class="mc-team ${cls} ${isPh(id) ? "ph" : ""} ${done && win && win !== id ? "lost" : ""} ${done && win === id ? "won" : ""}">${crest(id, opts.big ? "lg" : "")}<span>${safe(team(id).name)}</span></div>`;
       return `<article class="mc ${live ? "is-live" : ""} ${opts.big ? "big" : ""}" data-match="${f.id}" tabindex="0">
           <div class="mc-top"><span class="mc-stage ${isKO(f.stage) ? "ko" : ""}">${safe(STAGES[f.stage || "league"] || "Match")}${f.round ? ` · Round ${f.round}` : ""}</span>${f.venue ? `<span class="mc-venue">📍 ${safe(f.venue)}</span>` : ""}</div>
           <div class="mc-row">${side(f.home, "home")}<div class="mc-mid">${mid}</div>${side(f.away, "away")}</div>
+          ${cardFoot(f)}
           ${manage ? `<div class="mc-tools">${teamsSet(f) ? "" : `<span class="mc-ph-note">Teams decided later</span>`}<button class="btn btn-sun btn-sm" data-result="${f.id}" ${teamsSet(f) ? "" : "disabled"}>${done ? "Edit result" : live ? "Update live" : "Enter result"}</button><button class="btn btn-light btn-sm" data-edit="${f.id}">Edit</button><button class="icon-btn" data-del="${f.id}" aria-label="Delete match">✕</button></div>` : ""}
         </article>`;
     }
@@ -222,8 +243,8 @@
       const F = fixtures();
       if (!F.length) return empty("📅", "No fixtures yet", isStaff() ? "Create the full league schedule in one click, or add matches one by one in Manage mode." : "The organiser hasn't published the fixtures yet. Check back soon.", noFixturesCTA());
       const live = F.filter(f => f.status === "live");
-      const next = F.filter(f => f.status !== "done" && f.status !== "live").slice(0, 3);
-      const last = F.filter(played).sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 3);
+      const next = F.filter(f => f.status !== "done" && f.status !== "live");
+      const last = F.filter(played).sort((a, b) => (b.at || 0) - (a.at || 0));
       const table = standings().slice(0, 5), st = playerStats();
       const lead = (arr, k) => arr.filter(x => x[k] > 0).sort((a, b) => b[k] - a[k] || b.goals - a.goals)[0];
       const top = lead(st, "goals"), ast = lead(st, "assists"), mvp = lead(st, "motm");
@@ -233,8 +254,8 @@
       return `
         ${live.length ? `<section class="hub-sec"><h2 class="hub-h"><span class="hub-live-dot"></span> Live now</h2><div class="mc-list">${live.map(f => matchCard(f, { big: true })).join("")}</div></section>` : ""}
         <div class="hub-grid2">
-          <section class="hub-sec"><h2 class="hub-h">Next up</h2>${next.length ? `<div class="mc-list">${next.map(f => matchCard(f)).join("")}</div>` : `<p class="muted">No more matches scheduled.</p>`}</section>
-          <section class="hub-sec"><h2 class="hub-h">Latest results</h2>${last.length ? `<div class="mc-list">${last.map(f => matchCard(f)).join("")}</div>` : `<p class="muted">No results yet.</p>`}</section>
+          <section class="hub-sec"><h2 class="hub-h">Next up${next.length > 2 ? ` <small class="hub-count">${next.length}</small>` : ""}</h2>${next.length ? `<div class="mc-list scroll">${next.map(f => matchCard(f)).join("")}</div>` : `<p class="muted">No more matches scheduled.</p>`}</section>
+          <section class="hub-sec"><h2 class="hub-h">Latest results${last.length > 2 ? ` <small class="hub-count">${last.length}</small>` : ""}</h2>${last.length ? `<div class="mc-list scroll">${last.map(f => matchCard(f)).join("")}</div>` : `<p class="muted">No results yet.</p>`}</section>
         </div>
         <div class="hub-grid2">
           <section class="hub-sec"><h2 class="hub-h">Table <button class="link-btn" data-tab="table">Full table ›</button></h2>${tableHTML(table, true)}</section>
@@ -348,7 +369,7 @@
           <div class="hm-board">
             <div class="hm-team">${crest(g.home, "xl")}<b>${safe(team(g.home).name)}</b></div>
             <div class="hm-score">${hasScore(g) ? `<span>${s.h}</span><i>–</i><span>${s.a}</span>` : `<em>${g.at ? fmtTime(g.at) : "TBD"}</em>`}
-              <small>${g.status === "live" ? `<span class="hub-live-dot"></span> LIVE` : played(g) ? "Full time" : "Upcoming"}${played(g) && g.pens && g.pens.h != null && s.h === s.a ? ` · ${g.pens.h}–${g.pens.a} on pens` : ""}</small></div>
+              <small>${g.status === "live" ? `<span class="hub-live-dot"></span> LIVE` : played(g) ? "Full time" : "Upcoming"}${played(g) && pensText(g) ? ` · ${safe(pensText(g))}` : ""}</small></div>
             <div class="hm-team">${crest(g.away, "xl")}<b>${safe(team(g.away).name)}</b></div>
           </div>
           ${ev.length ? `<ul class="hm-events">${ev.map(e => eventLine(g, e)).join("")}</ul>` : hasScore(g) ? `<p class="muted" style="text-align:center">No goals or cards recorded.</p>` : ""}
@@ -514,9 +535,22 @@
       const f = fixtures().find(x => x.id === resultBox.id);
       if (!f) { resultBox.back.remove(); resultBox = null; return; }
       const s = scoreOf(f), ev = evList(f), ad = resultBox.adding;
+      const P = HS(), league = (f.stage || "league") === "league", sw = shootout(f);
+      const pts = !league ? null : s.h > s.a ? [P.win, P.loss] : s.h < s.a ? [P.loss, P.win]
+        : P.pens ? (sw === "h" ? [P.penWin, P.penLoss] : sw === "a" ? [P.penLoss, P.penWin] : null) : [P.draw, P.draw];
+      const scoreBox = (tid, k) => `<div class="sc-side" style="--c:${safe(team(tid).color)}">
+          ${crest(tid, "lg")}<b class="sc-name">${safe(team(tid).name)}</b>
+          <div class="sc-ctl"><button type="button" class="sc-btn" data-score="${k}:-1" ${s[k] <= 0 ? "disabled" : ""} aria-label="One less">−</button><span class="sc-n">${s[k]}</span><button type="button" class="sc-btn" data-score="${k}:1" aria-label="One more">＋</button></div>
+          ${pts ? `<span class="sc-pts">${pts[k === "h" ? 0 : 1]} pt${pts[k === "h" ? 0 : 1] === 1 ? "" : "s"}</span>` : ""}
+        </div>`;
+      const pensBlock = pensFor(f) && s.h === s.a && hasScore(f) ? `<div class="rs-pens">
+          <b>Draw: who won the penalty shootout?</b>
+          <div class="row" style="gap:8px;justify-content:center;flex-wrap:wrap">${[["h", f.home], ["a", f.away]].map(([k, tid]) => `<button type="button" class="btn btn-sm ${sw === k ? "btn-sun" : "btn-light"}" data-penwin="${k}">${sw === k ? "✓ " : ""}${safe(team(tid).name)}</button>`).join("")}</div>
+          <small class="muted">Shootout score (optional) <input class="input" type="number" min="0" id="pnH" value="${f.pens && f.pens.h != null ? f.pens.h : ""}" placeholder="${safe(team(f.home).name)}"> – <input class="input" type="number" min="0" id="pnA" value="${f.pens && f.pens.a != null ? f.pens.a : ""}" placeholder="${safe(team(f.away).name)}"></small>
+        </div>` : "";
       const side = (tid, key) => `
         <div class="rs-side" style="--c:${safe(team(tid).color)}">
-          <div class="rs-head">${crest(tid, "lg")}<b>${safe(team(tid).name)}</b><span class="rs-n">${key === "h" ? s.h : s.a}</span></div>
+          <div class="rs-head">${crest(tid, "sm")}<b>${safe(team(tid).name)}</b><span class="rs-sub">${(key === "h" ? s.eh : s.ea)} of ${(key === "h" ? s.h : s.a)} goals named</span></div>
           <ul class="rs-evs">${ev.filter(e => e.team === tid).map(e => `<li>${evIcon(e.type)} <span><b>${safe(pname(e.pid, e))}</b>${e.type === "pen" ? " (pen)" : e.type === "og" ? " (own goal)" : ""}${e.assist ? ` <small>· assist ${safe(pname(e.assist))}</small>` : ""}</span><em>${e.min ? e.min + "′" : ""}</em><button class="icon-btn" data-rmev="${e.id}" aria-label="Remove">✕</button></li>`).join("") || `<li class="muted" style="justify-content:center">Nothing yet</li>`}</ul>
           ${ad && ad.team === tid ? `<div class="rs-add">
               <div class="hub-fgrid">
@@ -535,8 +569,12 @@
           <button class="icon-btn modal-x" aria-label="Close">✕</button>
           <p class="hm-meta">${safe(STAGES[f.stage || "league"])}${f.round ? ` · Round ${f.round}` : ""}${f.at ? ` · ${fmtShort(f.at)}, ${fmtTime(f.at)}` : ""}</p>
           <div class="hub-seg rs-status">${[["scheduled", "Not started"], ["live", "🔴 Live"], ["done", "Full time"]].map(([k, l]) => `<button type="button" class="${(f.status || "scheduled") === k ? "on" : ""}" data-status="${k}">${l}</button>`).join("")}</div>
-          <div class="rs-grid">${side(f.home, "h")}${side(f.away, "a")}</div>
-          ${pensFor(f) && s.h === s.a ? `<div class="rs-pens"><b>Penalty shootout</b> <input class="input" type="number" min="0" id="pnH" value="${f.pens && f.pens.h != null ? f.pens.h : ""}" placeholder="${safe(team(f.home).name)}"> – <input class="input" type="number" min="0" id="pnA" value="${f.pens && f.pens.a != null ? f.pens.a : ""}" placeholder="${safe(team(f.away).name)}"></div>` : ""}
+          <div class="sc-board">${scoreBox(f.home, "h")}<span class="sc-dash">–</span>${scoreBox(f.away, "a")}</div>
+          ${pensBlock}
+          ${league && hasScore(f) && !pts ? `<p class="hint" style="text-align:center;margin:6px 0 0">Pick the shootout winner to give points.</p>` : ""}
+          <details class="rs-more" ${ev.length || resultBox.adding || resultBox.open ? "open" : ""}><summary>Scorers & cards <small>(optional)</small></summary>
+            <div class="rs-grid">${side(f.home, "h")}${side(f.away, "a")}</div>
+          </details>
           <label class="rs-motm">⭐ Player of the match<select class="select" id="rsMotm">${motmOpts}</select></label>
           <div class="rs-off"><p class="off-title">Match officials</p>${officialInputs(f, "ro_")}</div>
           <p class="hint" style="text-align:center;margin-top:12px">Every change is saved instantly and shows on everyone's screen.</p>
@@ -555,6 +593,17 @@
         await save(f.id, { status: v, ...(v === "live" && !f.startedAt ? { startedAt: Date.now() } : {}) });
         return;
       }
+      const sc = e.target.closest("[data-score]");
+      if (sc) {
+        const [k, d] = sc.dataset.score.split(":"), s = scoreOf(f), v = Math.max(0, s[k] + +d);
+        const patch = { hs: s.h, as: s.a, [k === "h" ? "hs" : "as"]: v };
+        if ((f.status || "scheduled") === "scheduled") patch.status = "live";
+        await save(f.id, patch);
+        return;
+      }
+      const pw = e.target.closest("[data-penwin]");
+      if (pw) { await save(f.id, { pens: { win: pw.dataset.penwin } }); return; }
+      if (e.target.closest(".rs-more summary")) { rb.open = !rb.back.querySelector(".rs-more").open; return; }
       if (e.target.closest("[data-addgoal]")) { rb.adding = { kind: "goal", team: e.target.closest("[data-addgoal]").dataset.addgoal }; drawResult(); return; }
       if (e.target.closest("[data-addcard]")) { rb.adding = { kind: "card", team: e.target.closest("[data-addcard]").dataset.addcard }; drawResult(); return; }
       if (e.target.closest("[data-addcancel]")) { rb.adding = null; drawResult(); return; }
@@ -569,6 +618,11 @@
         if (as && as !== pid && ev.type !== "og") ev.assist = as;
         rb.adding = null;
         const patch = { [`events/${newId()}`]: ev };
+        const s0 = scoreOf(f), forHome = (ev.type === "og") !== (ad.team === f.home);
+        if (ev.type === "goal" || ev.type === "pen" || ev.type === "og") {
+          patch.hs = Math.max(s0.h, s0.eh + (forHome ? 1 : 0));
+          patch.as = Math.max(s0.a, s0.ea + (forHome ? 0 : 1));
+        }
         if ((f.status || "scheduled") === "scheduled") patch.status = "live";             // the first goal starts the match
         await save(f.id, patch);
         return;
@@ -584,7 +638,7 @@
       if (/^ro_/.test(e.target.id) && !offLocked(f)) await save(f.id, { officials: readOfficials(rb.back, "ro_") });
       if (e.target.id === "pnH" || e.target.id === "pnA") {
         const h = rb.back.querySelector("#pnH").value, a = rb.back.querySelector("#pnA").value;
-        await save(f.id, { pens: h === "" && a === "" ? null : { h: h === "" ? null : +h, a: a === "" ? null : +a } });
+        await save(f.id, { pens: h === "" && a === "" ? (f.pens && f.pens.win ? { win: f.pens.win } : null) : { h: h === "" ? null : +h, a: a === "" ? null : +a, ...(f.pens && f.pens.win ? { win: f.pens.win } : {}) } });
       }
     }
 

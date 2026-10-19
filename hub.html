@@ -42,11 +42,24 @@
     const shootout = f => { const s = scoreOf(f); return s.h === s.a && f.pens && f.pens.h != null && f.pens.a != null && f.pens.h !== f.pens.a ? (f.pens.h > f.pens.a ? "h" : "a") : null; };
     const pensFor = f => isKO(f.stage) || (HS().pens && (f.stage || "league") === "league");
     const teams = () => Object.entries((A && A.teams) || {});
-    const team = id => ((A && A.teams) || {})[id] || { name: "TBD", color: "#8895A0" };
+    // Placeholders for matches whose teams aren't known yet: "rank:1" (league position) or "tbd"
+    const isPh = id => typeof id === "string" && (id === "tbd" || id.startsWith("rank:"));
+    const phName = id => id === "tbd" ? "To be decided" : `Rank ${id.slice(5)}`;
+    const team = id => isPh(id) ? { name: phName(id), color: "#8895A0", ph: true } : ((A && A.teams) || {})[id] || { name: "TBD", color: "#8895A0", ph: true };
     const crest = (id, size = "") => crestHTML(team(id), logoOf(logos, id), size);
-    const fixtures = () => Object.entries(H().fixtures || {})
-      .map(([id, f]) => ({ id, ...f }))
-      .sort((a, b) => (a.at || 9e15) - (b.at || 9e15) || (a.round || 0) - (b.round || 0) || (a.order || 0) - (b.order || 0));
+    const byTime = (a, b) => (a.at || 9e15) - (b.at || 9e15) || (a.round || 0) - (b.round || 0) || (a.order || 0) - (b.order || 0);
+    const rawFixtures = () => Object.entries(H().fixtures || {}).map(([id, f]) => ({ id, ...f })).sort(byTime);
+    // "Rank 1" becomes the real team once every league match has a result
+    function leagueFinal() {
+      const L = rawFixtures().filter(f => (f.stage || "league") === "league");
+      return L.length && L.every(f => f.status === "done") ? standings() : null;
+    }
+    const fixtures = () => {
+      const fin = rawFixtures().some(f => isPh(f.home) || isPh(f.away)) ? leagueFinal() : null;
+      const res = id => { if (!fin || !String(id).startsWith("rank:")) return id; const r = fin[+id.slice(5) - 1]; return r ? r.id : id; };
+      return rawFixtures().map(f => ({ ...f, rawHome: f.home, rawAway: f.away, home: res(f.home), away: res(f.away) }));
+    };
+    const teamsSet = f => !isPh(f.home) && !isPh(f.away);
     const squadIds = tid => Object.entries((A && A.players) || {}).filter(([, p]) => p.status === "sold" && p.soldTo === tid)
       .sort((a, b) => catList(A.settings).findIndex(c => c.id === a[1].cat) - catList(A.settings).findIndex(c => c.id === b[1].cat) || String(a[1].name).localeCompare(String(b[1].name)));
     const pname = (pid, ev) => (pid && A.players && A.players[pid] ? A.players[pid].name : (ev && ev.n) || "Unknown");
@@ -72,7 +85,7 @@
     function standings() {
       const P = HS(), rows = {};
       teams().forEach(([id]) => { rows[id] = { id, p: 0, w: 0, d: 0, l: 0, pw: 0, pl: 0, gf: 0, ga: 0, pts: 0, form: [] }; });
-      fixtures().filter(f => played(f) && (f.stage || "league") === "league" && rows[f.home] && rows[f.away]).forEach(f => {
+      rawFixtures().filter(f => played(f) && (f.stage || "league") === "league" && rows[f.home] && rows[f.away]).forEach(f => {
         const { h, a } = scoreOf(f), H_ = rows[f.home], W = rows[f.away];
         H_.p++; W.p++; H_.gf += h; H_.ga += a; W.gf += a; W.ga += h;
         if (h > a) { H_.w++; W.l++; H_.pts += P.win; W.pts += P.loss; H_.form.push("W"); W.form.push("L"); }
@@ -185,11 +198,11 @@
         ? `<div class="mc-score ${live ? "live" : ""}"><b>${s.h}</b><i>–</i><b>${s.a}</b></div>
            <div class="mc-state">${live ? `<span class="hub-live-dot"></span>LIVE` : "Full time"}${done && f.pens && f.pens.h != null && s.h === s.a ? ` · pens ${f.pens.h}–${f.pens.a}` : ""}</div>`
         : `<div class="mc-time">${f.at ? fmtTime(f.at) : "TBD"}</div><div class="mc-state">${f.at ? fmtShort(f.at) : "Date TBD"}</div>`;
-      const side = (id, cls) => `<div class="mc-team ${cls} ${done && win && win !== id ? "lost" : ""} ${done && win === id ? "won" : ""}">${crest(id, opts.big ? "lg" : "")}<span>${safe(team(id).name)}</span></div>`;
+      const side = (id, cls) => `<div class="mc-team ${cls} ${isPh(id) ? "ph" : ""} ${done && win && win !== id ? "lost" : ""} ${done && win === id ? "won" : ""}">${crest(id, opts.big ? "lg" : "")}<span>${safe(team(id).name)}</span></div>`;
       return `<article class="mc ${live ? "is-live" : ""} ${opts.big ? "big" : ""}" data-match="${f.id}" tabindex="0">
           <div class="mc-top"><span class="mc-stage ${isKO(f.stage) ? "ko" : ""}">${safe(STAGES[f.stage || "league"] || "Match")}${f.round ? ` · Round ${f.round}` : ""}</span>${f.venue ? `<span class="mc-venue">📍 ${safe(f.venue)}</span>` : ""}</div>
           <div class="mc-row">${side(f.home, "home")}<div class="mc-mid">${mid}</div>${side(f.away, "away")}</div>
-          ${manage ? `<div class="mc-tools"><button class="btn btn-sun btn-sm" data-result="${f.id}">${done ? "Edit result" : live ? "Update live" : "Enter result"}</button><button class="btn btn-light btn-sm" data-edit="${f.id}">Edit</button><button class="icon-btn" data-del="${f.id}" aria-label="Delete match">✕</button></div>` : ""}
+          ${manage ? `<div class="mc-tools">${teamsSet(f) ? "" : `<span class="mc-ph-note">Teams decided later</span>`}<button class="btn btn-sun btn-sm" data-result="${f.id}" ${teamsSet(f) ? "" : "disabled"}>${done ? "Edit result" : live ? "Update live" : "Enter result"}</button><button class="btn btn-light btn-sm" data-edit="${f.id}">Edit</button><button class="icon-btn" data-del="${f.id}" aria-label="Delete match">✕</button></div>` : ""}
         </article>`;
     }
 
@@ -362,7 +375,8 @@
         onMount(back, close);
       });
     }
-    const teamOpts = sel => teams().map(([id, t]) => `<option value="${id}" ${id === sel ? "selected" : ""}>${safe(t.name)}</option>`).join("");
+    const teamOpts = sel => `<optgroup label="Teams">${teams().map(([id, t]) => `<option value="${id}" ${id === sel ? "selected" : ""}>${safe(t.name)}</option>`).join("")}</optgroup>
+      <optgroup label="Decide later">${teams().map((_, i) => `<option value="rank:${i + 1}" ${sel === "rank:" + (i + 1) ? "selected" : ""}>Rank ${i + 1} (league position)</option>`).join("")}<option value="tbd" ${sel === "tbd" ? "selected" : ""}>To be decided</option></optgroup>`;
     const stageOpts = sel => Object.entries(STAGES).map(([k, l]) => `<option value="${k}" ${k === (sel || "league") ? "selected" : ""}>${l}</option>`).join("");
 
     async function editMatch(id) {
@@ -371,8 +385,8 @@
       const T = teams();
       await form(f ? "Edit match" : "Add a match", `
         <div class="hub-fgrid">
-          <label>Home team<select class="select" id="mHome">${teamOpts(f ? f.home : T[0][0])}</select></label>
-          <label>Away team<select class="select" id="mAway">${teamOpts(f ? f.away : T[1][0])}</select></label>
+          <label>Home team<select class="select" id="mHome">${teamOpts(f ? f.rawHome : T[0][0])}</select></label>
+          <label>Away team<select class="select" id="mAway">${teamOpts(f ? f.rawAway : T[1][0])}</select></label>
           <label>Date & time<input class="input" type="datetime-local" id="mAt" value="${toInput(f && f.at)}"></label>
           <label>Venue<input class="input" id="mVenue" maxlength="60" placeholder="e.g. KAFCO Ground" value="${safe((f && f.venue) || (fixtures().find(x => x.venue) || {}).venue || "")}"></label>
           <label>Stage<select class="select" id="mStage">${stageOpts(f && f.stage)}</select></label>
@@ -384,7 +398,7 @@
         (back, close) => {
           back.querySelector("#mSave").onclick = async () => {
             const home = back.querySelector("#mHome").value, away = back.querySelector("#mAway").value;
-            if (home === away) { back.querySelector("#mErr").textContent = "Pick two different teams."; return; }
+            if (home === away && home !== "tbd") { back.querySelector("#mErr").textContent = "Pick two different teams."; return; }
             const data = { home, away, at: fromInput(back.querySelector("#mAt").value), venue: back.querySelector("#mVenue").value.trim().slice(0, 60),
               stage: back.querySelector("#mStage").value, round: +back.querySelector("#mRound").value || null, note: back.querySelector("#mNote").value.trim().slice(0, 120) || null };
             if (f) await save(f.id, data);
@@ -470,6 +484,9 @@
     // ============================================================
     let resultBox = null;
     function openResult(id) {
+      const f0 = fixtures().find(x => x.id === id);
+      if (f0 && !teamsSet(f0)) return alertBox("Teams not set yet", "Pick the two teams with Edit first (Rank places fill in by themselves once every league match has a result).", "🗓️");
+      if (f0 && (f0.rawHome !== f0.home || f0.rawAway !== f0.away)) save(id, { home: f0.home, away: f0.away });   // lock in the teams the ranks became
       const back = document.createElement("div");
       back.className = "modal-back";
       resultBox = { back, id, adding: null };

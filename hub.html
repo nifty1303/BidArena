@@ -48,7 +48,7 @@
     const isPh = id => typeof id === "string" && (id === "tbd" || id.startsWith("rank:"));
     const phName = id => id === "tbd" ? "To be decided" : `Rank ${id.slice(5)}`;
     const team = id => isPh(id) ? { name: phName(id), color: "#8895A0", ph: true } : ((A && A.teams) || {})[id] || { name: "TBD", color: "#8895A0", ph: true };
-    const crest = (id, size = "") => crestHTML(team(id), logoOf(logos, id), size);
+    const crest = (id, size = "") => isPh(id) ? `<span class="crest ph-crest ${size}">${id === "tbd" ? "?" : "#" + id.slice(5)}</span>` : crestHTML(team(id), logoOf(logos, id), size);
     const byTime = (a, b) => (a.at || 9e15) - (b.at || 9e15) || (a.round || 0) - (b.round || 0) || (a.order || 0) - (b.order || 0);
     const rawFixtures = () => Object.entries(H().fixtures || {}).map(([id, f]) => ({ id, ...f })).sort(byTime);
     // "Rank 1" becomes the real team once every league match has a result

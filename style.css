@@ -1529,3 +1529,22 @@ body.has-reactdock .wrap { padding-bottom: 90px; }
 /* hub: date headings readable over the photo background */
 .hub-day h3 { display: inline-flex; align-items: center; gap: 8px; margin: 6px 0 10px; padding: 7px 14px; border-radius: 999px; background: var(--ink); color: #fff; font-size: 15px; letter-spacing: 0.08em; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18); }
 .hub-day h3::before { content: "📅"; font-size: 13px; letter-spacing: 0; }
+
+/* hub overview: upcoming matches lead, results beside them smaller */
+.hub-lead { display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.hub-lead .side-sec { padding: 14px; }
+.hub-lead .side-sec .hub-h { font-size: 18px; margin-bottom: 10px; }
+.hub-lead .side-sec .mc-list.scroll { max-height: 520px; }
+.mc.mini { padding: 8px 10px 9px; border-radius: 12px; }
+.mc.mini .mc-top { margin-bottom: 4px; font-size: 11px; }
+.mc.mini .mc-venue { display: none; }
+.mc.mini .mc-row { gap: 6px; }
+.mc.mini .mc-team { font-size: 13px; gap: 6px; }
+.mc.mini .mc-team .crest { width: 26px; height: 26px; border-radius: 8px; font-size: 10px; }
+.mc.mini .mc-mid { min-width: 56px; }
+.mc.mini .mc-score { font-size: 20px; padding: 3px 8px; }
+.mc.mini .mc-time { font-size: 16px; }
+.mc.mini .mc-state { font-size: 10px; margin-top: 2px; }
+.mc.mini .mc-tools { margin-top: 6px; padding-top: 6px; }
+.mc.mini .mc-tools .btn { padding: 6px 10px; font-size: 12px; }
+@media (max-width: 760px) { .hub-lead { grid-template-columns: 1fr; } }

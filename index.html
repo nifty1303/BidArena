@@ -23,7 +23,7 @@
       catList, catMax, squadLimits, squadText, catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine, purseLeftOf,
       playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
       onDisconnect, watchConnection, cleanName, nameKeyOf, currentUser, isHostAccount, confirmBox,
-      audioReady, showBreak, squadCardBlob, squadCSV, shareOrDownload, allSquadsCardBlob, downloadBlob, fileSafe, squadGroupsHTML, sendReaction, watchReactions, floatReaction, reactBarHTML, downloadCSV, refreshTourLogo, clearTourLogo, renderSquadShow, catIntroHTML, introOn, lotSounds
+      audioReady, showBreak, squadCardBlob, squadCSV, shareOrDownload, allSquadsCardBlob, downloadBlob, fileSafe, squadGroupsHTML, sendReaction, watchReactions, floatReaction, reactBarHTML, reactOn, reactGapMs, coolReactBars, downloadCSV, refreshTourLogo, clearTourLogo, renderSquadShow, catIntroHTML, introOn, lotSounds
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Live auctions");
@@ -75,6 +75,12 @@
         <div class="bidbar-row"><p id="pStatus" class="status-line"></p></div>`;
       document.body.appendChild(bar);
       $("bidBtn").onclick = () => placeBid(1);
+    }
+    // reactions can be switched off by the host at any time
+    function syncReactBars() {
+      const on = reactOn(A);
+      document.querySelectorAll(".react-bar").forEach(b => { b.hidden = !on; });
+      document.body.classList.toggle("has-reactdock", on && !!$("reactDock"));
     }
     function bidBarOff() { $("bidBar")?.remove(); document.body.classList.remove("has-bidbar"); $("reactDock")?.remove(); document.body.classList.remove("has-reactdock"); }
     function bidBarShow(on) {
@@ -486,6 +492,7 @@
         refreshBanners();
         refreshTourLogo(code, A);
         setViewer();
+        syncReactBars();
         loadTeamLogos(code, A.teams, logos).then(changed => { if (changed) { $("liveShell")?.remove(); lastKey = ""; render(); } });
       });
     }
@@ -528,6 +535,7 @@
       // reactions: inline for teams (the bid bar sits at the bottom), a floating bar for viewers
       if (t) $("needsLine").insertAdjacentHTML("afterend", reactBarHTML("inline"));
       else { document.body.insertAdjacentHTML("beforeend", reactBarHTML("dock").replace('class="react-bar dock"', 'id="reactDock" class="react-bar dock"')); document.body.classList.add("has-reactdock"); }
+      syncReactBars();
       if ($("editBtn")) $("editBtn").onclick = openEditTeam;
       $("leaveBtn").onclick = async () => {
         if (t && !await confirmLeave()) return;
@@ -814,7 +822,8 @@
     document.addEventListener("click", e => {
       const b = e.target.closest("[data-react]");
       if (!b || !code || !me || !A || A.status !== "live") return;
-      if (sendReaction(code, me.uid, (myMember && myMember.name) || myName(), b.dataset.react)) { b.classList.remove("pop"); void b.offsetWidth; b.classList.add("pop"); }
+      if (!reactOn(A)) return;
+      if (sendReaction(code, me.uid, (myMember && myMember.name) || myName(), b.dataset.react, reactGapMs(A))) { b.classList.remove("pop"); void b.offsetWidth; b.classList.add("pop"); coolReactBars(reactGapMs(A)); }
     });
     document.addEventListener("pointerdown", () => { unlockAudio(); setTimeout(() => { if ($("soundBtn") && audioReady()) $("soundBtn").hidden = true; }, 120); });
     // break countdown from the host

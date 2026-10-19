@@ -803,8 +803,17 @@
           "at"
         ],
         "$rid": {
-          ".write": "auth != null && !data.exists() && newData.child('uid').val() === auth.uid && root.child('auctions').child($aid).child('status').val() === 'live'",
+          ".write": "auth != null && !data.exists() && newData.child('uid').val() === auth.uid && root.child('auctions').child($aid).child('status').val() === 'live' && root.child('auctions').child($aid).child('settings').child('reactOn').val() !== false && newData.parent().parent().parent().child('auctionReactLast').child($aid).child(auth.uid).val() === now",
           ".validate": "newData.hasChildren(['e', 'at', 'uid']) && newData.child('e').isString() && newData.child('e').val().matches(/^(fire|clap|wow|love|laugh|money)$/) && newData.child('at').val() === now && (!newData.child('n').exists() || (newData.child('n').isString() && newData.child('n').val().length <= 24))"
+        }
+      }
+    },
+    "auctionReactLast": {
+      "$aid": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.val() === now && (!data.exists() || (root.child('auctions').child($aid).child('settings').child('reactGap').exists() && now - data.val() >= root.child('auctions').child($aid).child('settings').child('reactGap').val() * 1000) || (!root.child('auctions').child($aid).child('settings').child('reactGap').exists() && now - data.val() >= 1000))"
         }
       }
     }

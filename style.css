@@ -1452,3 +1452,6 @@ body.has-reactdock .wrap { padding-bottom: 90px; }
 .form i.PW { background: #fff; color: #1E9E5A; box-shadow: inset 0 0 0 2px #1E9E5A; }
 .form i.PL { background: #fff; color: #D7263D; box-shadow: inset 0 0 0 2px #D7263D; }
 .hub-fgrid [hidden] { display: none; }
+.mc-team.ph span { font-style: italic; color: var(--dim); font-weight: 700; }
+.mc-team.ph .crest { opacity: 0.55; }
+.mc-ph-note { margin-right: auto; font-size: 12px; font-weight: 700; color: var(--dim); }

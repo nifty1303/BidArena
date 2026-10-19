@@ -794,6 +794,19 @@
           ".validate": "newData.hasChildren(['name', 'at']) && newData.child('name').isString() && newData.child('name').val().length >= 1 && newData.child('name').val().length <= 24 && newData.child('at').isNumber()"
         }
       }
+    },
+    "auctionReactions": {
+      "$aid": {
+        ".read": "auth != null",
+        ".write": "auth != null && (root.child('auctions').child($aid).child('owner').val() === auth.uid || root.child('auctions').child($aid).child('editors').child(auth.uid).exists())",
+        ".indexOn": [
+          "at"
+        ],
+        "$rid": {
+          ".write": "auth != null && !data.exists() && newData.child('uid').val() === auth.uid && root.child('auctions').child($aid).child('status').val() === 'live'",
+          ".validate": "newData.hasChildren(['e', 'at', 'uid']) && newData.child('e').isString() && newData.child('e').val().matches(/^(fire|clap|wow|love|laugh|money)$/) && newData.child('at').val() === now && (!newData.child('n').exists() || (newData.child('n').isString() && newData.child('n').val().length <= 24))"
+        }
+      }
     }
   }
 }

@@ -23,7 +23,7 @@
       catList, catMax, squadLimits, squadText, catColour, crestHTML, loadTeamLogos, logoOf, compressPhoto, applySportTheme, playerTags, playerLine, purseLeftOf,
       playerDetailsHTML, positionOf, loadBanners, bannerHTML, startBannerShow, setPageBackground,
       onDisconnect, watchConnection, cleanName, nameKeyOf, currentUser, isHostAccount, confirmBox,
-      audioReady, showBreak, squadCardBlob, squadCSV, shareOrDownload, allSquadsCardBlob, downloadBlob, fileSafe, squadGroupsHTML, downloadCSV, refreshTourLogo, clearTourLogo, renderSquadShow, catIntroHTML, introOn, lotSounds
+      audioReady, showBreak, squadCardBlob, squadCSV, shareOrDownload, allSquadsCardBlob, downloadBlob, fileSafe, squadGroupsHTML, sendReaction, watchReactions, floatReaction, reactBarHTML, downloadCSV, refreshTourLogo, clearTourLogo, renderSquadShow, catIntroHTML, introOn, lotSounds
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Live auctions");
@@ -34,7 +34,7 @@
     let me = null;               // signed-in (invisible) user
     let code = null, A = null;
     let myTeam = null;           // team id, or null when just watching
-    let stopListen = null;
+    let stopListen = null, stopReact = null;
     let lastKey = "", lastSeq = -1, wasLeading = false, skipBidSeq = -1;
     let myWish = {};             // this team's private wishlist
     let stopWish = null;
@@ -76,7 +76,7 @@
       document.body.appendChild(bar);
       $("bidBtn").onclick = () => placeBid(1);
     }
-    function bidBarOff() { $("bidBar")?.remove(); document.body.classList.remove("has-bidbar"); }
+    function bidBarOff() { $("bidBar")?.remove(); document.body.classList.remove("has-bidbar"); $("reactDock")?.remove(); document.body.classList.remove("has-reactdock"); }
     function bidBarShow(on) {
       const bar = $("bidBar");
       if (!bar) return;
@@ -117,8 +117,8 @@
     function stopAll() {
       clearViewer();
       bidBarOff();
-      [stopListen, stopWish, stopMember].forEach(f => f && f());
-      stopListen = stopWish = stopMember = null;
+      [stopListen, stopWish, stopMember, stopReact].forEach(f => f && f());
+      stopListen = stopWish = stopMember = stopReact = null;
       myMember = null;
     }
 
@@ -476,6 +476,8 @@
       if (stopListen) stopListen();
       lastKey = ""; lastSeq = -1;
       watchMe();
+      if (stopReact) stopReact();
+      stopReact = watchReactions(code, v => { if (A && A.status === "live" && !document.hidden) floatReaction(v, { span: 34, max: 24 }); });
       stopListen = onValue(ref(db, `auctions/${code}`), snap => {
         A = snap.val();
         if (!A) { stopAll(); clearSeat(); showCodeForm("This auction has been closed."); return; }
@@ -523,6 +525,9 @@
       $("soundBtn").onclick = () => { unlockAudio(); setTimeout(() => { sounds.bid(); $("soundBtn") && ($("soundBtn").hidden = audioReady()); }, 60); };
       animate(view);
       if (t) bidBarOn(); else bidBarOff();
+      // reactions: inline for teams (the bid bar sits at the bottom), a floating bar for viewers
+      if (t) $("needsLine").insertAdjacentHTML("afterend", reactBarHTML("inline"));
+      else { document.body.insertAdjacentHTML("beforeend", reactBarHTML("dock").replace('class="react-bar dock"', 'id="reactDock" class="react-bar dock"')); document.body.classList.add("has-reactdock"); }
       if ($("editBtn")) $("editBtn").onclick = openEditTeam;
       $("leaveBtn").onclick = async () => {
         if (t && !await confirmLeave()) return;
@@ -806,6 +811,11 @@
     }
     setInterval(() => { if (A && A.status === "live") tick(); }, 200);
     // any tap turns sound on (phones block it until the person touches the page)
+    document.addEventListener("click", e => {
+      const b = e.target.closest("[data-react]");
+      if (!b || !code || !me || !A || A.status !== "live") return;
+      if (sendReaction(code, me.uid, (myMember && myMember.name) || myName(), b.dataset.react)) { b.classList.remove("pop"); void b.offsetWidth; b.classList.add("pop"); }
+    });
     document.addEventListener("pointerdown", () => { unlockAudio(); setTimeout(() => { if ($("soundBtn") && audioReady()) $("soundBtn").hidden = true; }, 120); });
     // break countdown from the host
     setInterval(() => {

@@ -1207,3 +1207,26 @@ body.display-mode #nextUp { display: none !important; }
 /* dark showcase list: category colour on each row */
 .sq-list li { border-left-color: var(--cc, var(--c)); }
 .sq-cat { font-style: normal; font-weight: 800; color: var(--cc); filter: brightness(1.25); }
+
+/* live reactions */
+.react-layer { position: fixed; inset: 0; pointer-events: none; z-index: 97; overflow: hidden; }
+.rx { position: absolute; bottom: -70px; display: flex; flex-direction: column; align-items: center; gap: 2px; animation: rxUp var(--dur, 3s) cubic-bezier(.2,.7,.3,1) forwards; will-change: transform, opacity; }
+.rx-e { font-size: 34px; line-height: 1; filter: drop-shadow(0 4px 8px rgba(0,0,0,.25)); }
+.rx.big .rx-e { font-size: clamp(44px, 4vw, 64px); }
+.rx-n { padding: 2px 8px; border-radius: 999px; background: rgba(10, 31, 24, 0.72); color: #fff; font: 700 12px/1.3 var(--body, sans-serif); white-space: nowrap; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.rx.big .rx-n { font-size: 14px; }
+@keyframes rxUp {
+  0% { transform: translate(0, 0) scale(.4); opacity: 0; }
+  12% { transform: translate(calc(var(--dx) * .2), -12vh) scale(1.15); opacity: 1; }
+  70% { opacity: 1; }
+  100% { transform: translate(var(--dx), -78vh) scale(.9); opacity: 0; }
+}
+.react-bar { display: flex; justify-content: space-between; gap: 6px; padding: 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.95); border: 1px solid var(--line); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12); }
+.react-bar button { flex: 1; min-width: 0; height: 44px; border: 0; border-radius: 999px; background: transparent; font-size: 24px; cursor: pointer; transition: transform .12s, background .12s; -webkit-tap-highlight-color: transparent; }
+.react-bar button:active { transform: scale(1.3); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.react-bar button.pop { animation: rxPop .35s ease-out; }
+@keyframes rxPop { 40% { transform: scale(1.4); } }
+.react-bar.inline { margin: 12px 0 4px; }
+.react-bar.dock { position: fixed; left: 50%; bottom: max(14px, env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(420px, calc(100% - 32px)); z-index: 60; }
+body.has-reactdock .wrap { padding-bottom: 90px; }
+.react-hint { text-align: center; font-size: 12px; font-weight: 700; color: var(--dim, #6b7c80); margin: 2px 0 0; }

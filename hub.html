@@ -64,8 +64,14 @@
     const teamsSet = f => !isPh(f.home) && !isPh(f.away);
     const otherSide = (f, tid) => tid === f.home ? f.away : f.home;
     const evSide = (f, e) => e.type === "og" ? otherSide(f, e.team) : e.team;     // an own goal sits with the team it counted for
-    // cards are tight: 3+ word names keep only the middle name(s), at most two words
-    const shortName = n => { const w = String(n || "").trim().split(/\s+/); return w.length <= 2 ? w.join(" ") : w.slice(1, -1).slice(0, 2).join(" "); };
+    // cards are tight: one name per player (skip prefixes like Md/Mohammed; keep Sr/Jr so namesakes stay apart)
+    const NAME_PREFIX = /^(md\.?|mohd\.?|mohammad|mohammed|muhammad|mohamed|sk\.?|sheikh|shaikh|syed|sayed|mr\.?|dr\.?)$/i;
+    const shortName = n => {
+      const w = String(n || "").trim().split(/\s+/).filter(Boolean);
+      const suffix = w.length > 1 && /^(sr|jr|snr|jnr)\.?$/i.test(w[w.length - 1]) ? " " + w.pop() : "";
+      const core = w.length > 1 ? w.filter(x => !NAME_PREFIX.test(x)) : w;
+      return (core[0] || w[0] || "") + suffix;
+    };
     const ogMini = e => `<i class="og-tag" style="--oc:${safe(team(e.team).color)}" title="Own goal by a ${safe(team(e.team).name)} player">OG</i>`;
     const ogTag = e => `<i class="og-tag" style="--oc:${safe(team(e.team).color)}">OG · ${safe(team(e.team).name)}</i>`;
     // Match officials: editable until the match is marked Full time, then locked

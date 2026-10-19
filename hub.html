@@ -62,6 +62,9 @@
       return rawFixtures().map(f => ({ ...f, rawHome: f.home, rawAway: f.away, home: res(f.home), away: res(f.away) }));
     };
     const teamsSet = f => !isPh(f.home) && !isPh(f.away);
+    const otherSide = (f, tid) => tid === f.home ? f.away : f.home;
+    const evSide = (f, e) => e.type === "og" ? otherSide(f, e.team) : e.team;     // an own goal sits with the team it counted for
+    const ogTag = e => `<i class="og-tag" style="--oc:${safe(team(e.team).color)}">OG · ${safe(team(e.team).name)}</i>`;
     // Match officials: editable until the match is marked Full time, then locked
     const OFFICIALS = [["ref", "Referee"], ["l1", "Linesman 1"], ["l2", "Linesman 2"]];
     const offLocked = f => !!f && f.status === "done";
@@ -212,11 +215,11 @@
       if (!ev.length) return "";
       const line = tid => {
         const by = {};
-        ev.filter(e => e.team === tid).forEach(e => {
-          const k = (e.type === "yellow" || e.type === "red" ? e.type : "g") + ":" + (e.pid || e.n || "?");
-          (by[k] = by[k] || { e, mins: [] }).mins.push(e.min ? e.min + "′" + (e.type === "pen" ? " p" : e.type === "og" ? " og" : "") : (e.type === "pen" ? "p" : e.type === "og" ? "og" : ""));
+        ev.filter(e => evSide(f, e) === tid).forEach(e => {
+          const k = (e.type === "yellow" || e.type === "red" || e.type === "og" ? e.type : "g") + ":" + (e.pid || e.n || "?");
+          (by[k] = by[k] || { e, mins: [] }).mins.push(e.min ? e.min + "′" + (e.type === "pen" ? " p" : "") : (e.type === "pen" ? "p" : ""));
         });
-        return Object.values(by).map(({ e, mins }) => `<span>${e.type === "yellow" ? "🟨" : e.type === "red" ? "🟥" : "⚽"} ${safe(pname(e.pid, e))}${mins.filter(Boolean).length ? ` <small>${mins.filter(Boolean).join(", ")}</small>` : ""}</span>`).join("");
+        return Object.values(by).map(({ e, mins }) => `<span>${e.type === "yellow" ? "🟨" : e.type === "red" ? "🟥" : "⚽"} ${safe(pname(e.pid, e))}${e.type === "og" ? " " + ogTag(e) : ""}${mins.filter(Boolean).length ? ` <small>${mins.filter(Boolean).join(", ")}</small>` : ""}</span>`).join("");
       };
       return `<div class="mc-ev"><div class="h">${line(f.home)}</div><div class="a">${line(f.away)}</div></div>`;
     }
@@ -350,8 +353,8 @@
     // ============================================================
     const evIcon = t => ({ goal: "⚽", pen: "⚽", og: "⚽", yellow: "🟨", red: "🟥" }[t] || "•");
     function eventLine(f, e) {
-      const extra = e.type === "pen" ? " (pen)" : e.type === "og" ? " (own goal)" : "";
-      return `<li class="ev ${e.team === f.home ? "h" : "a"} ${e.type}"><span class="ev-min">${e.min ? e.min + "′" : ""}</span><span class="ev-ico">${evIcon(e.type)}</span>
+      const extra = e.type === "pen" ? " (pen)" : e.type === "og" ? " " + ogTag(e) : "";
+      return `<li class="ev ${evSide(f, e) === f.home ? "h" : "a"} ${e.type}"><span class="ev-min">${e.min ? e.min + "′" : ""}</span><span class="ev-ico">${evIcon(e.type)}</span>
         <span class="ev-txt"><b>${safe(pname(e.pid, e))}</b>${extra}${e.assist ? `<small>assist ${safe(pname(e.assist))}</small>` : ""}</span></li>`;
     }
     function openMatch(id) {
@@ -550,14 +553,14 @@
       const side = (tid, key) => `
         <div class="rs-side" style="--c:${safe(team(tid).color)}">
           <div class="rs-head">${crest(tid, "sm")}<b>${safe(team(tid).name)}</b><span class="rs-sub">${(key === "h" ? s.eh : s.ea)} of ${(key === "h" ? s.h : s.a)} goals named</span></div>
-          <ul class="rs-evs">${ev.filter(e => e.team === tid).map(e => `<li>${evIcon(e.type)} <span><b>${safe(pname(e.pid, e))}</b>${e.type === "pen" ? " (pen)" : e.type === "og" ? " (own goal)" : ""}${e.assist ? ` <small>· assist ${safe(pname(e.assist))}</small>` : ""}</span><em>${e.min ? e.min + "′" : ""}</em><button class="icon-btn" data-rmev="${e.id}" aria-label="Remove">✕</button></li>`).join("") || `<li class="muted" style="justify-content:center">Nothing yet</li>`}</ul>
+          <ul class="rs-evs">${ev.filter(e => evSide(f, e) === tid).map(e => `<li class="${e.type === "og" ? "og" : ""}" ${e.type === "og" ? `style="--oc:${safe(team(e.team).color)}"` : ""}>${evIcon(e.type)} <span><b>${safe(pname(e.pid, e))}</b>${e.type === "pen" ? " (pen)" : e.type === "og" ? " " + ogTag(e) : ""}${e.assist ? ` <small>· assist ${safe(pname(e.assist))}</small>` : ""}</span><em>${e.min ? e.min + "′" : ""}</em><button class="icon-btn" data-rmev="${e.id}" aria-label="Remove">✕</button></li>`).join("") || `<li class="muted" style="justify-content:center">Nothing yet</li>`}</ul>
           ${ad && ad.team === tid ? `<div class="rs-add">
               <div class="hub-fgrid">
-                <label>${ad.kind === "goal" ? "Scorer" : "Player"}<select class="select" id="adP">${playerOpts(tid, ad.pid || "")}</select></label>
+                <label>${ad.kind === "goal" ? (ad.type === "og" ? `Own goal by (${safe(team(otherSide(f, tid)).name)})` : "Scorer") : "Player"}<select class="select" id="adP">${playerOpts(ad.type === "og" ? otherSide(f, tid) : tid, ad.pid || "")}</select></label>
                 ${ad.pid === "__other" ? `<label>Name<input class="input" id="adN" maxlength="24"></label>` : ""}
-                <label>${ad.kind === "goal" ? "Type" : "Card"}<select class="select" id="adT">${ad.kind === "goal" ? `<option value="goal">Goal</option><option value="pen">Penalty</option><option value="og">Own goal</option>` : `<option value="yellow">🟨 Yellow</option><option value="red">🟥 Red</option>`}</select></label>
+                <label>${ad.kind === "goal" ? "Type" : "Card"}<select class="select" id="adT">${ad.kind === "goal" ? [["goal", "Goal"], ["pen", "Penalty"], ["og", `Own goal (by ${safe(team(otherSide(f, tid)).name)})`]].map(([v, l]) => `<option value="${v}" ${(ad.type || "goal") === v ? "selected" : ""}>${l}</option>`).join("") : `<option value="yellow">🟨 Yellow</option><option value="red">🟥 Red</option>`}</select></label>
                 <label>Minute<input class="input" type="number" min="1" max="130" id="adM" placeholder="e.g. 23"></label>
-                ${ad.kind === "goal" ? `<label>Assist <small class="muted">(optional)</small><select class="select" id="adA">${playerOpts(tid, "", "No assist").replace(/<option value="__other">.*?<\/option>/, "")}</select></label>` : ""}
+                ${ad.kind === "goal" && ad.type !== "og" ? `<label>Assist <small class="muted">(optional)</small><select class="select" id="adA">${playerOpts(tid, "", "No assist").replace(/<option value="__other">.*?<\/option>/, "")}</select></label>` : ""}
               </div>
               <div class="row" style="gap:8px;justify-content:flex-end"><button class="btn btn-light btn-sm" data-addcancel>Cancel</button><button class="btn btn-sun btn-sm" data-addsave>Add ${ad.kind === "goal" ? "goal" : "card"}</button></div>
             </div>` : `<div class="row" style="gap:8px"><button class="btn btn-sun btn-sm grow" data-addgoal="${tid}">＋ Goal</button><button class="btn btn-light btn-sm grow" data-addcard="${tid}">＋ Card</button></div>`}
@@ -611,13 +614,14 @@
         let pid = box.querySelector("#adP").value, n = box.querySelector("#adN") ? box.querySelector("#adN").value.trim().slice(0, 24) : "";
         if (pid === "__other") pid = "";
         if (!pid && !n && ad.kind === "card") { box.querySelector("#adP").focus(); return; }
-        const ev = { type: box.querySelector("#adT").value, team: ad.team, min: Math.max(0, Math.min(130, +box.querySelector("#adM").value || 0)) || null, at: Date.now(),
+        const evType = box.querySelector("#adT").value;
+        const ev = { type: evType, team: evType === "og" ? otherSide(f, ad.team) : ad.team, min: Math.max(0, Math.min(130, +box.querySelector("#adM").value || 0)) || null, at: Date.now(),
           ...(pid ? { pid } : {}), ...(n ? { n } : {}) };
         const as = box.querySelector("#adA") ? box.querySelector("#adA").value : "";
         if (as && as !== pid && ev.type !== "og") ev.assist = as;
         rb.adding = null;
         const patch = { [`events/${newId()}`]: ev };
-        const s0 = scoreOf(f), forHome = (ev.type === "og") !== (ad.team === f.home);
+        const s0 = scoreOf(f), forHome = evSide(f, ev) === f.home;
         if (ev.type === "goal" || ev.type === "pen" || ev.type === "og") {
           patch.hs = Math.max(s0.h, s0.eh + (forHome ? 1 : 0));
           patch.as = Math.max(s0.a, s0.ea + (forHome ? 0 : 1));
@@ -632,6 +636,7 @@
     async function onResultChange(e) {
       const rb = resultBox; if (!rb) return;
       const f = fixtures().find(x => x.id === rb.id);
+      if (e.target.id === "adT" && rb.adding && rb.adding.kind === "goal") { const keepM = rb.back.querySelector("#adM").value; rb.adding.type = e.target.value; rb.adding.pid = ""; drawResult(); rb.back.querySelector("#adM").value = keepM; return; }
       if (e.target.id === "adP") { rb.adding.pid = e.target.value; const keepT = rb.back.querySelector("#adT").value, keepM = rb.back.querySelector("#adM").value; drawResult(); rb.back.querySelector("#adT").value = keepT; rb.back.querySelector("#adM").value = keepM; return; }
       if (e.target.id === "rsMotm") await save(f.id, { motm: e.target.value || null });
       if (/^ro_/.test(e.target.id) && !offLocked(f)) await save(f.id, { officials: readOfficials(rb.back, "ro_") });

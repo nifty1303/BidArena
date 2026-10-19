@@ -1452,8 +1452,7 @@ body.has-reactdock .wrap { padding-bottom: 90px; }
 .form i.PW { background: #fff; color: #1E9E5A; box-shadow: inset 0 0 0 2px #1E9E5A; }
 .form i.PL { background: #fff; color: #D7263D; box-shadow: inset 0 0 0 2px #D7263D; }
 .hub-fgrid [hidden] { display: none; }
-.mc-team.ph span { font-style: italic; color: var(--dim); font-weight: 700; }
-.mc-team.ph .crest { opacity: 0.55; }
+.mc-team.ph span { color: var(--dim); font-weight: 700; }
 .mc-ph-note { margin-right: auto; font-size: 12px; font-weight: 700; color: var(--dim); }
 
 /* match officials */
@@ -1494,3 +1493,21 @@ body.has-reactdock .wrap { padding-bottom: 90px; }
 .mc-score { display: inline-flex; }
 .mc-mid { max-width: 200px; }
 .mc-state { flex-wrap: wrap; text-align: center; }
+
+/* result screen: keep both team boxes inside the modal */
+.rs-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.rs-side { overflow: hidden; }
+.rs-head { flex-wrap: wrap; }
+.rs-head b { flex: 1 1 auto; font-size: 18px; }
+.rs-sub { flex-basis: 100%; margin-left: 0; white-space: normal; }
+.rs-side .row { flex-wrap: wrap; }
+.rs-side .row .btn { min-width: 0; flex: 1 1 90px; }
+.rs-evs li { min-width: 0; }
+.rs-more summary { outline: none; border-radius: 10px; }
+.rs-more summary:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft); }
+.hub-fgrid .hub-check { display: flex; flex-direction: row; align-items: center; gap: 10px; font-size: 14px; font-weight: 700; color: var(--ink); }
+.hub-fgrid .hub-check input { width: 18px; height: 18px; flex: none; margin: 0; }
+.hub-fgrid .hub-check[hidden] { display: none; }
+
+/* placeholder teams (Rank 1, To be decided) */
+.crest.ph-crest { background: #fff; color: var(--dim); box-shadow: none; border: 2px dashed var(--line2); text-shadow: none; font-family: var(--display); font-weight: 800; }

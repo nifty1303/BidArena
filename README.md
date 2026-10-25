@@ -5,6 +5,8 @@ Live player auctions for tournaments. The host runs setup and the auction room f
 - `index.html`: landing page, team phones and viewers
 - `host.html`: auction setup (sport, money, categories, teams, players, photos, share links)
 - `room.html`: the auction room for the big screen (host only)
+- `hub.html`: the tournament hub (fixtures, results, table, stats) after an auction ends
+- `stats.html`: owner-only usage stats (hosts and emails, auctions, watchers, devices); readable only by the owner's Google account
 - `database_rules.json`: Firebase Realtime Database rules (paste into the Firebase console and publish)
 
 ## Deploy

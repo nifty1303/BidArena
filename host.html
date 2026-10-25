@@ -89,7 +89,7 @@
       readSheetFile, norm, matchRole, matchSub, matchHand, cleanAge,
       dialog, alertBox, confirmBox, copyText, teamBudget, allMaxBids, compressBanner, loadBanners, mountBidders, initials, positionOf,
       compressLogo, refreshTourLogo, clearTourLogo
-    , REACT_GAPS
+    , REACT_GAPS, ADMIN_EMAIL
     } from "./app.js";
 
     document.getElementById("brandSlot").innerHTML = brandHTML("Auction setup");
@@ -219,6 +219,7 @@
             <p class="eyebrow" style="margin:0">My profile</p>
             <h1 class="title" style="margin:2px 0 0">${safe(user.displayName || "Host")}</h1>
             <p class="lead" style="margin:4px 0 0">${safe(user.email || "")}</p>
+            ${(user.email || "").toLowerCase() === ADMIN_EMAIL ? `<a class="btn btn-dark btn-sm" href="stats.html" style="margin-top:10px">📊 Owner stats</a>` : ""}
             ${since ? `<p class="muted" style="margin:4px 0 0">Hosting with BidArena since ${safe(since)} · signed in with Google</p>` : ""}
           </div>
         </div>

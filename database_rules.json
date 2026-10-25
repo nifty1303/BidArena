@@ -657,6 +657,7 @@
       }
     },
     "auctions": {
+      ".read": "auth != null && auth.token.email === 'nifty1303@gmail.com' && auth.token.email_verified === true",
       "$aid": {
         ".read": "auth != null",
         ".write": "auth != null && ((!data.exists() && newData.child('owner').val() === auth.uid && auth.provider !== 'anonymous' && $aid.matches(/^[A-Z0-9]{6}$/)) || (data.exists() && data.child('owner').val() === auth.uid) || (data.exists() && newData.exists() && data.child('editors').child(auth.uid).exists()))",
@@ -707,6 +708,7 @@
       }
     },
     "auctionMembers": {
+      ".read": "auth != null && auth.token.email === 'nifty1303@gmail.com' && auth.token.email_verified === true",
       "$aid": {
         ".read": "auth != null && (root.child('auctions').child($aid).child('owner').val() === auth.uid || root.child('auctions').child($aid).child('editors').child(auth.uid).exists())",
         ".write": "auth != null && (root.child('auctions').child($aid).child('owner').val() === auth.uid || root.child('auctions').child($aid).child('editors').child(auth.uid).exists())",
@@ -755,6 +757,7 @@
       }
     },
     "auctionViewers": {
+      ".read": "auth != null && auth.token.email === 'nifty1303@gmail.com' && auth.token.email_verified === true",
       "$aid": {
         ".read": "auth != null && (root.child('auctions').child($aid).child('owner').val() === auth.uid || root.child('auctions').child($aid).child('editors').child(auth.uid).exists())",
         ".write": "auth != null && (root.child('auctions').child($aid).child('owner').val() === auth.uid || root.child('auctions').child($aid).child('editors').child(auth.uid).exists())",
@@ -780,12 +783,14 @@
       }
     },
     "auctionsByOwner": {
+      ".read": "auth != null && auth.token.email === 'nifty1303@gmail.com' && auth.token.email_verified === true",
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
         ".write": "auth != null && auth.uid === $uid && auth.provider !== 'anonymous'"
       }
     },
     "auctionWatchLog": {
+      ".read": "auth != null && auth.token.email === 'nifty1303@gmail.com' && auth.token.email_verified === true",
       "$aid": {
         ".read": "auth != null && (root.child('auctions').child($aid).child('owner').val() === auth.uid || root.child('auctions').child($aid).child('editors').child(auth.uid).exists())",
         ".write": "auth != null && (root.child('auctions').child($aid).child('owner').val() === auth.uid || root.child('auctions').child($aid).child('editors').child(auth.uid).exists())",
@@ -814,6 +819,31 @@
           ".read": "auth != null && auth.uid === $uid",
           ".write": "auth != null && auth.uid === $uid",
           ".validate": "newData.val() === now && (!data.exists() || (root.child('auctions').child($aid).child('settings').child('reactGap').exists() && now - data.val() >= root.child('auctions').child($aid).child('settings').child('reactGap').val() * 1000) || (!root.child('auctions').child($aid).child('settings').child('reactGap').exists() && now - data.val() >= 1000))"
+        }
+      }
+    },
+    "bidUsers": {
+      ".read": "auth != null && auth.token.email === 'nifty1303@gmail.com' && auth.token.email_verified === true",
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid && auth.provider !== 'anonymous'",
+        ".validate": "newData.hasChildren(['email', 'name', 'last']) && newData.child('email').isString() && newData.child('email').val().length <= 120 && newData.child('name').isString() && newData.child('name').val().length <= 60 && newData.child('last').isNumber() && (!newData.child('first').exists() || newData.child('first').isNumber())"
+      }
+    },
+    "bidVisits": {
+      ".read": "auth != null && auth.token.email === 'nifty1303@gmail.com' && auth.token.email_verified === true",
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid",
+        ".validate": "newData.hasChildren(['last']) && newData.child('last').isNumber() && (!newData.child('first').exists() || newData.child('first').isNumber()) && (!newData.child('page').exists() || (newData.child('page').isString() && newData.child('page').val().length <= 20))"
+      }
+    },
+    "hubVisits": {
+      ".read": "auth != null && auth.token.email === 'nifty1303@gmail.com' && auth.token.email_verified === true",
+      "$aid": {
+        "$uid": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isNumber()"
         }
       }
     }

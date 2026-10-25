@@ -17,7 +17,7 @@
 
   <script type="module">
     import {
-      db, ref, onValue, update, set, get, copyText, currentUser, ensureGuest, isHostAccount, signInHost,
+      db, ref, onValue, update, set, get, copyText, serverTimestamp, currentUser, ensureGuest, isHostAccount, signInHost,
       safe, crestHTML, loadTeamLogos, logoOf, brandHTML, refreshTourLogo, squadGroupsHTML, catList, catColour, catInk,
       positionOf, confirmBox, alertBox, applySportTheme, setPageBackground, loadBanners, newId, money
     } from "./app.js";
@@ -730,6 +730,7 @@
     async function start() {
       if (!code) { root.innerHTML = `<div class="card hub-locked"><h1 class="title">No tournament chosen</h1><p class="lead">Open the hub from an auction's results.</p></div>`; return; }
       user = (await currentUser()) || (await ensureGuest());
+      set(ref(db, `hubVisits/${code}/${user.uid}`), serverTimestamp()).catch(() => {});
       onValue(ref(db, `auctions/${code}`), async snap => {
         A = snap.val();
         if (!A) { root.innerHTML = `<div class="card hub-locked"><h1 class="title">Tournament not found</h1><p class="lead">Check the link and try again.</p></div>`; return; }

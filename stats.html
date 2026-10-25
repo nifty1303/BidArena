@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Stats · BidArena</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700;800&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-sport="home">
+  <main class="wrap stats-wrap">
+    <div class="topbar"><span id="brandSlot"></span><span class="row" style="gap:8px"><a class="btn btn-light btn-sm" href="host.html">My auctions</a></span></div>
+    <section id="view"><div class="card" style="padding:28px;text-align:center"><p class="lead">Loading…</p></div></section>
+  </main>
+
+  <script type="module">
+    import { db, ref, get, currentUser, signInHost, safe, brandHTML, ADMIN_EMAIL, money } from "./app.js";
+
+    document.getElementById("brandSlot").innerHTML = brandHTML("Owner stats");
+    const view = document.getElementById("view");
+    const DAY = 864e5;
+    const fmt = ms => ms ? new Date(ms).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }) : "–";
+    const ago = ms => {
+      if (!ms) return "–";
+      const m = Math.round((Date.now() - ms) / 60000);
+      return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+    };
+    const n = x => (x || 0).toLocaleString();
+    const keys = o => Object.keys(o || {});
+    const read = async path => { try { const s = await get(ref(db, path)); return s.val() || {}; } catch (e) { return { __denied: e.message || "denied" }; } };
+
+    async function start() {
+      let user = await currentUser();
+      if (!user || user.isAnonymous || (user.email || "").toLowerCase() !== ADMIN_EMAIL) {
+        view.innerHTML = `<div class="card stats-gate">
+            <h1 class="title" style="font-size:40px">Owner <span>stats</span></h1>
+            <p class="lead">${user && !user.isAnonymous ? `Signed in as ${safe(user.email || "")}. This page is only for the BidArena owner.` : "Sign in with the owner's Google account to see usage."}</p>
+            <button class="btn btn-sun btn-lg" id="inBtn" style="margin-top:14px">Sign in with Google</button></div>`;
+        document.getElementById("inBtn").onclick = async () => { try { await signInHost(); location.reload(); } catch (e) {} };
+        return;
+      }
+      view.innerHTML = `<div class="card" style="padding:28px;text-align:center"><p class="lead">Counting everything…</p></div>`;
+      const [auctions, users, visits, byOwner, members, watch, hubV, viewers] = await Promise.all(
+        ["auctions", "bidUsers", "bidVisits", "auctionsByOwner", "auctionMembers", "auctionWatchLog", "hubVisits", "auctionViewers"].map(read));
+      if (users.__denied || visits.__denied) {
+        view.innerHTML = `<div class="card stats-gate"><h1 class="title" style="font-size:36px">Rules not published yet</h1>
+          <p class="lead">Publish the latest <b>database_rules.json</b> in the Firebase console (Realtime Database → Rules), then reload this page.</p></div>`;
+        return;
+      }
+      render({ auctions, users, visits, byOwner, members, watch, hubV, viewers });
+    }
+
+    function render(D) {
+      const now = Date.now();
+      const created = {};                                   // auction code -> created time (from the owners' lists)
+      Object.values(D.byOwner).forEach(list => Object.entries(list || {}).forEach(([c, m]) => { if (m && m.createdAt && m.role !== "editor") created[c] = m.createdAt; }));
+      const A = Object.entries(D.auctions).filter(([, a]) => a && a.owner);
+      // hosts: everyone who signed in with Google, plus owners who haven't been back since tracking began
+      const hosts = {};
+      Object.entries(D.users).forEach(([uid, u]) => { hosts[uid] = { uid, name: u.name, email: u.email, first: u.first, last: u.last, auctions: [], collab: [] }; });
+      A.forEach(([c, a]) => {
+        (hosts[a.owner] = hosts[a.owner] || { uid: a.owner, name: a.ownerName || "Host", email: "", auctions: [], collab: [] }).auctions.push(c);
+        Object.entries(a.editors || {}).forEach(([uid, e]) => {
+          const h = hosts[uid] = hosts[uid] || { uid, name: e.name, email: e.email || "", auctions: [], collab: [] };
+          if (!h.email && e.email) h.email = e.email;
+          h.collab.push(c);
+        });
+      });
+      const H = Object.values(hosts).sort((a, b) => (b.last || 0) - (a.last || 0) || b.auctions.length - a.auctions.length);
+
+      // devices that opened BidArena
+      const V = Object.values(D.visits);
+      const inLast = d => V.filter(v => (v.last || 0) > now - d).length;
+      const newIn = d => V.filter(v => (v.first || 0) > now - d).length;
+      const days = Array.from({ length: 14 }, (_, i) => { const d0 = new Date(); d0.setHours(0, 0, 0, 0); return d0.getTime() - (13 - i) * DAY; });
+      const perDay = days.map(d => V.filter(v => (v.last || 0) >= d && (v.last || 0) < d + DAY).length);
+      const maxDay = Math.max(1, ...perDay);
+
+      // per auction
+      const rows = A.map(([c, a]) => {
+        const st = a.stats || {}, P = Object.values(a.players || {});
+        const watchers = keys(D.watch[c]).length, phones = Object.values(D.members[c] || {});
+        const fx = Object.values((a.hub && a.hub.fixtures) || {});
+        return { c, a, created: created[c] || 0, teams: keys(a.teams).length, players: P.length, sold: P.filter(p => p.status === "sold").length,
+          watchers: Math.max(watchers, st.totalViewers || 0), peak: st.peakViewers || 0, phones: phones.length, approved: phones.filter(m => m.approved).length,
+          live: keys(D.viewers[c]).length, hub: keys(D.hubV[c]).length, fixtures: fx.length, played: fx.filter(f => f.status === "done").length,
+          watcherNames: Object.values(D.watch[c] || {}).map(w => w.name), phoneNames: phones.map(m => m.name),
+          owner: hosts[a.owner] || {}, editors: Object.values(a.editors || {}) };
+      }).sort((x, y) => (y.created || 0) - (x.created || 0));
+
+      const sum = k => rows.reduce((t, r) => t + (r[k] || 0), 0);
+      const tile = (label, value, sub = "") => `<div class="st-tile"><span>${label}</span><b>${value}</b>${sub ? `<small>${sub}</small>` : ""}</div>`;
+      view.innerHTML = `
+        <div class="st-head"><h1 class="title" style="font-size:clamp(34px,5vw,52px)">BidArena <span>stats</span></h1><p class="muted">Updated ${new Date().toLocaleString()} · <button class="link-btn" id="reload">Refresh</button></p></div>
+        <div class="st-tiles">
+          ${tile("Hosts &amp; collaborators", n(H.length), `${n(Object.values(D.users).filter(u => (u.last || 0) > now - 7 * DAY).length)} active this week`)}
+          ${tile("Auctions created", n(rows.length), `${n(rows.filter(r => r.a.status === "live").length)} live · ${n(rows.filter(r => r.a.status === "ended").length)} finished`)}
+          ${tile("Players auctioned", n(sum("sold")), `of ${n(sum("players"))} listed`)}
+          ${tile("People who watched", n(sum("watchers")), `${n(sum("live"))} watching right now`)}
+          ${tile("Team phones joined", n(sum("phones")), `${n(sum("approved"))} approved`)}
+          ${tile("Hub visitors", n(sum("hub")), `${n(sum("played"))} matches played`)}
+          ${tile("Devices (all pages)", n(V.length), `${n(inLast(DAY))} today · ${n(inLast(7 * DAY))} this week`)}
+          ${tile("New devices", n(newIn(7 * DAY)), `this week · ${n(newIn(DAY))} today`)}
+        </div>
+
+        <section class="st-sec"><h2 class="hub-h">Devices per day <small class="hub-count">last 14 days</small></h2>
+          <div class="st-bars">${days.map((d, i) => `<div class="st-bar" title="${perDay[i]} on ${new Date(d).toDateString()}"><i style="height:${Math.round(perDay[i] / maxDay * 100)}%"></i><b>${perDay[i] || ""}</b><span>${new Date(d).toLocaleDateString([], { day: "numeric", month: "short" })}</span></div>`).join("")}</div>
+          <p class="hub-note">A device is one phone or browser. Counted on the day it last opened BidArena.</p></section>
+
+        <section class="st-sec"><h2 class="hub-h">Hosts <small class="hub-count">${H.length}</small></h2>
+          <div class="hub-table-wrap"><table class="hub-table st-table"><thead><tr><th class="tl">Name</th><th class="tl">Email</th><th>Auctions</th><th>Collaborates</th><th>First seen</th><th>Last seen</th></tr></thead>
+          <tbody>${H.map(h => `<tr><td class="tl"><b>${safe(h.name || "Host")}</b></td><td class="tl">${h.email ? `<a href="mailto:${safe(h.email)}">${safe(h.email)}</a>` : `<small class="muted">shows after their next sign-in</small>`}</td>
+            <td>${h.auctions.length}</td><td>${h.collab.length}</td><td>${fmt(h.first)}</td><td>${ago(h.last)}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">No hosts yet</td></tr>`}</tbody></table></div>
+          <p class="hub-note">Emails are saved when someone signs in with Google, from this update on. Collaborators' emails come from their invites.</p></section>
+
+        <section class="st-sec"><h2 class="hub-h">Auctions <small class="hub-count">${rows.length}</small></h2>
+          <div class="st-list">${rows.map(r => `
+            <details class="st-auc">
+              <summary>
+                <span class="st-t"><b>${safe(r.a.title || "Untitled")}</b><small>${r.c} · ${safe(r.owner.name || r.a.ownerName || "")}${r.owner.email ? ` · ${safe(r.owner.email)}` : ""} · ${fmt(r.created)}</small></span>
+                <span class="pill ${r.a.status || "setup"}">${r.a.status === "live" ? "Live" : r.a.status === "ended" ? "Finished" : "Setup"}</span>
+                <span class="st-n"><b>${r.teams}</b>teams</span><span class="st-n"><b>${r.sold}/${r.players}</b>sold</span><span class="st-n"><b>${r.watchers}</b>watched</span><span class="st-n"><b>${r.peak}</b>peak</span><span class="st-n"><b>${r.phones}</b>phones</span><span class="st-n"><b>${r.hub}</b>hub</span>
+              </summary>
+              <div class="st-more">
+                <p><b>Collaborators:</b> ${r.editors.length ? r.editors.map(e => `${safe(e.name)}${e.email ? ` &lt;${safe(e.email)}&gt;` : ""}`).join(", ") : "none"}</p>
+                <p><b>Team phones (${r.phoneNames.length}):</b> ${r.phoneNames.map(safe).join(", ") || "none"}</p>
+                <p><b>Watched (${r.watcherNames.length}):</b> ${r.watcherNames.map(safe).join(", ") || "none recorded"}</p>
+                <p><b>Hub:</b> ${r.fixtures ? `${r.played}/${r.fixtures} matches played · ` : ""}${r.hub} visitors · <a href="hub.html?a=${r.c}" target="_blank" rel="noopener">open</a> · <a href="room.html?a=${r.c}&view=display" target="_blank" rel="noopener">display</a></p>
+              </div>
+            </details>`).join("") || `<p class="muted">No auctions yet.</p>`}</div></section>`;
+      document.getElementById("reload").onclick = () => location.reload();
+    }
+    start();
+  </script>
+</body>
+</html>

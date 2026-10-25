@@ -43,6 +43,28 @@ export async function ensureGuest() {
 }
 export const signOutUser = () => signOut(auth);
 
+// ---------- usage stats (only the BidArena owner can read these) ----------
+// Every device that opens a page is counted once per page load; Google sign-ins also keep name + email.
+export const ADMIN_EMAIL = "nifty1303@gmail.com";
+let trackedUid = "";
+onAuthStateChanged(auth, async user => {
+  if (!user || user.uid === trackedUid) return;
+  trackedUid = user.uid;
+  try {
+    const page = (location.pathname.split("/").pop() || "index.html").replace(/\.html$/, "") || "index";
+    const seen = await get(ref(db, `bidVisits/${user.uid}/first`)).catch(() => null);
+    const ch = { [`bidVisits/${user.uid}/last`]: serverTimestamp(), [`bidVisits/${user.uid}/page`]: page.slice(0, 20), [`bidVisits/${user.uid}/anon`]: !!user.isAnonymous };
+    if (!seen || !seen.exists()) ch[`bidVisits/${user.uid}/first`] = serverTimestamp();
+    if (!user.isAnonymous) {
+      ch[`bidUsers/${user.uid}/email`] = (user.email || "").slice(0, 120);
+      ch[`bidUsers/${user.uid}/name`] = (user.displayName || user.email || "Host").slice(0, 60);
+      ch[`bidUsers/${user.uid}/last`] = serverTimestamp();
+      if (!seen || !seen.exists()) ch[`bidUsers/${user.uid}/first`] = serverTimestamp();
+    }
+    await update(ref(db), ch);
+  } catch (e) { /* stats never get in the way */ }
+});
+
 // ---------- connection ----------
 // cb(true/false) whenever this device connects to or loses the database
 export const watchConnection = cb => onValue(ref(db, ".info/connected"), snap => cb(!!snap.val()));
